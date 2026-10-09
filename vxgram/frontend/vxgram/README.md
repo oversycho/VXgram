@@ -1,17 +1,15 @@
-# vxgram
+# VXGram (Flutter + Supabase + BLoC, clean layers)
 
-A new Flutter project.
+    lib/features/<feature>/
+      domain/        repository interface (+ entities)      <- what the app needs
+      data/
+        datasources/ DataSource interface + Supabase impl   <- raw backend calls
+        models/      JSON -> entity mapping
+        repositories/ Repository impl (maps errors -> AppFailure)
+      bloc/          depends ONLY on domain interfaces
+      ui/            widgets, read blocs
 
-## Getting Started
+Dependency direction: ui -> bloc -> domain <- data. `main.dart` is the only file that knows the concrete classes
+(composition root). Tests use fakes from `test/fakes/` (no network, no Supabase).
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Run: paste your keys into `lib/core/env.dart`, then `flutter pub get && flutter run`. Tests: `flutter test`.
