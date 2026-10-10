@@ -6,6 +6,7 @@ import '../../../core/env.dart';
 import '../../../core/l10n/app_strings.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/common.dart';
+import '../../profile/ui/profile_page.dart';
 import '../bloc/feed_bloc.dart';
 import '../domain/post.dart';
 import '../domain/post_repository.dart';
@@ -55,8 +56,13 @@ class _PostCardState extends State<PostCard> {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(children: [
-          Avatar(url: p.avatarUrl, size: 40), const SizedBox(width: 12),
-          Expanded(child: Text(p.username, style: const TextStyle(fontWeight: FontWeight.w700), textDirection: TextDirection.ltr, textAlign: TextAlign.start)),
+          Expanded(child: InkWell(
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfilePage(userId: p.userId))),
+            child: Row(children: [
+              Avatar(url: p.avatarUrl, size: 40), const SizedBox(width: 12),
+              Expanded(child: Text(p.username, style: const TextStyle(fontWeight: FontWeight.w700), textDirection: TextDirection.ltr, textAlign: TextAlign.start)),
+            ]),
+          )),
           Text(s.ago(p.createdAt), style: TextStyle(color: c.muted, fontSize: 12)),
           if (mine) IconButton(icon: const Icon(Icons.more_horiz), onPressed: _menu),
         ]),

@@ -40,7 +40,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           if (!signedIn) emit(state.copyWith(notice: 'confirm_email'));
         }));
     on<ResetRequested>((e, emit) => _run(emit, () async { await _repo.resetPassword(e.email); emit(state.copyWith(notice: 'reset_sent')); }));
-    on<PasswordChangeSubmitted>((e, emit) => _run(emit, () => _repo.updatePassword(e.password)));
+    on<PasswordChangeSubmitted>((e, emit) => _run(emit, () async { await _repo.updatePassword(e.password); emit(state.copyWith(notice: 'password_updated')); }));
     on<LogoutPressed>((e, emit) => _run(emit, _repo.signOut));
   }
   final AuthRepository _repo;

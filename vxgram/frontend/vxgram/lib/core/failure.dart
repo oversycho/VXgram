@@ -14,7 +14,7 @@ Future<T> guard<T>(Future<T> Function() run) async {
   } on AuthException catch (e) {
     throw AppFailure(e.message);
   } on PostgrestException catch (e) {
-    throw AppFailure(e.message);
+    throw AppFailure(e.code == '23505' ? 'This username is already taken' : e.message);
   } on StorageException catch (e) {
     throw AppFailure(e.message);
   } catch (e) {

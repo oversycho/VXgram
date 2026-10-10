@@ -13,26 +13,18 @@ class _AuthListener extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) => BlocListener<AuthBloc, AuthState>(
-        listenWhen: (p, c) =>
-            (c.error != null && c.error != p.error) ||
-            (c.notice != null && c.notice != p.notice),
+        listenWhen: (p, c) => (c.error != null && c.error != p.error) || (c.notice != null && c.notice != p.notice),
         listener: (context, st) {
           final msg = st.error ?? context.t(st.notice!);
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(msg)));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
         },
         child: child,
       );
 }
 
-String? vReq(BuildContext c, String? v) =>
-    (v == null || v.trim().isEmpty) ? c.t('required') : null;
-String? vEmail(BuildContext c, String? v) =>
-    (v == null || !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim()))
-        ? c.t('invalid_email')
-        : null;
-String? vPass(BuildContext c, String? v) =>
-    (v == null || v.length < 6) ? c.t('password_short') : null;
+String? vReq(BuildContext c, String? v) => (v == null || v.trim().isEmpty) ? c.t('required') : null;
+String? vEmail(BuildContext c, String? v) => (v == null || !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) ? c.t('invalid_email') : null;
+String? vPass(BuildContext c, String? v) => (v == null || v.length < 6) ? c.t('password_short') : null;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -44,11 +36,7 @@ class _LoginPageState extends State<LoginPage> {
   final _form = GlobalKey<FormState>();
   final _email = TextEditingController(), _pass = TextEditingController();
   @override
-  void dispose() {
-    _email.dispose();
-    _pass.dispose();
-    super.dispose();
-  }
+  void dispose() { _email.dispose(); _pass.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
@@ -57,77 +45,42 @@ class _LoginPageState extends State<LoginPage> {
       child: Scaffold(
         body: SafeArea(
           child: KeyboardSafeBody(
-            child: Form(
-              key: _form,
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Center(child: Logo(size: 40)),
-                    const SizedBox(height: 40),
-                    Text(context.t('welcome'),
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 24),
-                    AppTextField(
-                        controller: _email,
-                        label: context.t('email'),
-                        ltr: true,
-                        keyboard: TextInputType.emailAddress,
-                        validator: (v) => vEmail(context, v)),
-                    AppTextField(
-                        controller: _pass,
-                        label: context.t('password'),
-                        obscure: true,
-                        validator: (v) => vReq(context, v)),
-                    Align(
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: TextButton(
-                        onPressed: () {
-                          if (vEmail(context, _email.text) == null)
-                            context
-                                .read<AuthBloc>()
-                                .add(ResetRequested(_email.text));
-                          else
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                content: Text(context.t('invalid_email'))));
-                        },
-                        child: Text(context.t('forgot')),
-                      ),
+              child: Form(
+                key: _form,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  const Center(child: Logo(size: 40)),
+                  const SizedBox(height: 40),
+                  Text(context.t('welcome'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 24),
+                  AppTextField(controller: _email, label: context.t('email'), ltr: true, keyboard: TextInputType.emailAddress, validator: (v) => vEmail(context, v)),
+                  AppTextField(controller: _pass, label: context.t('password'), obscure: true, validator: (v) => vReq(context, v)),
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: TextButton(
+                      onPressed: () {
+                        if (vEmail(context, _email.text) == null) context.read<AuthBloc>().add(ResetRequested(_email.text));
+                        else ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('invalid_email'))));
+                      },
+                      child: Text(context.t('forgot')),
                     ),
-                    const SizedBox(height: 8),
-                    BlocBuilder<AuthBloc, AuthState>(
-                      buildWhen: (p, c) => p.busy != c.busy,
-                      builder: (context, st) => FilledButton(
-                        onPressed: st.busy
-                            ? null
-                            : () {
-                                if (_form.currentState!.validate())
-                                  context.read<AuthBloc>().add(
-                                      LoginSubmitted(_email.text, _pass.text));
-                              },
-                        child: st.busy
-                            ? const SizedBox(
-                                height: 22,
-                                width: 22,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : Text(context.t('login')),
-                      ),
+                  ),
+                  const SizedBox(height: 8),
+                  BlocBuilder<AuthBloc, AuthState>(
+                    buildWhen: (p, c) => p.busy != c.busy,
+                    builder: (context, st) => FilledButton(
+                      onPressed: st.busy ? null : () {
+                        if (_form.currentState!.validate()) context.read<AuthBloc>().add(LoginSubmitted(_email.text, _pass.text));
+                      },
+                      child: st.busy ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2)) : Text(context.t('login')),
                     ),
-                    const SizedBox(height: 16),
-                    TextButton(
-                      onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const SignUpPage())),
-                      child: Text(context.t('no_account'),
-                          style: TextStyle(
-                              color: c.primary, fontWeight: FontWeight.w600)),
-                    ),
-                  ]),
-            ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SignUpPage())),
+                    child: Text(context.t('no_account'), style: TextStyle(color: c.primary, fontWeight: FontWeight.w600)),
+                  ),
+                ]),
+              ),
           ),
         ),
       ),
@@ -143,23 +96,13 @@ class SignUpPage extends StatefulWidget {
 
 class _SignUpPageState extends State<SignUpPage> {
   final _form = GlobalKey<FormState>();
-  final _user = TextEditingController(),
-      _name = TextEditingController(),
-      _email = TextEditingController(),
-      _pass = TextEditingController();
+  final _user = TextEditingController(), _name = TextEditingController(), _email = TextEditingController(), _pass = TextEditingController();
   Timer? _debounce;
   bool? _available; // null = unknown/checking
   static final _rx = RegExp(r'^[a-zA-Z0-9._]{3,30}$');
 
   @override
-  void dispose() {
-    _debounce?.cancel();
-    _user.dispose();
-    _name.dispose();
-    _email.dispose();
-    _pass.dispose();
-    super.dispose();
-  }
+  void dispose() { _debounce?.cancel(); _user.dispose(); _name.dispose(); _email.dispose(); _pass.dispose(); super.dispose(); }
 
   void _check(String v) {
     _debounce?.cancel();
@@ -168,8 +111,7 @@ class _SignUpPageState extends State<SignUpPage> {
     _debounce = Timer(const Duration(milliseconds: 500), () async {
       try {
         final ok = await context.read<AuthRepository>().usernameAvailable(v);
-        if (mounted && _user.text.trim() == v.trim())
-          setState(() => _available = ok);
+        if (mounted && _user.text.trim() == v.trim()) setState(() => _available = ok);
       } catch (_) {}
     });
   }
@@ -178,16 +120,9 @@ class _SignUpPageState extends State<SignUpPage> {
   Widget build(BuildContext context) {
     final c = VxColors.of(context);
     final valid = _rx.hasMatch(_user.text.trim());
-    final helper = _user.text.isEmpty || !valid
-        ? context.t('username_rules')
-        : _available == null
-            ? '…'
-            : (_available!
-                ? context.t('username_available')
-                : context.t('username_taken'));
-    final helperColor = !valid || _available == null
-        ? c.muted
-        : (_available! ? c.success : c.error);
+    final helper = _user.text.isEmpty || !valid ? context.t('username_rules')
+        : _available == null ? '…' : (_available! ? context.t('username_available') : context.t('username_taken'));
+    final helperColor = !valid || _available == null ? c.muted : (_available! ? c.success : c.error);
     return _AuthListener(
       child: Scaffold(
         appBar: AppBar(),
@@ -197,78 +132,78 @@ class _SignUpPageState extends State<SignUpPage> {
             center: false,
             child: Form(
               key: _form,
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(context.t('signup'),
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 24),
-                    AppTextField(
-                        controller: _user,
-                        label: context.t('username'),
-                        ltr: true,
-                        onChanged: _check,
-                        helper: helper,
-                        helperColor: helperColor,
-                        validator: (v) => !_rx.hasMatch((v ?? '').trim())
-                            ? context.t('username_rules')
-                            : (_available == false
-                                ? context.t('username_taken')
-                                : null)),
-                    AppTextField(
-                        controller: _name,
-                        label: context.t('full_name'),
-                        validator: (v) => vReq(context, v)),
-                    AppTextField(
-                        controller: _email,
-                        label: context.t('email'),
-                        ltr: true,
-                        keyboard: TextInputType.emailAddress,
-                        validator: (v) => vEmail(context, v)),
-                    AppTextField(
-                        controller: _pass,
-                        label: context.t('password'),
-                        obscure: true,
-                        validator: (v) => vPass(context, v)),
-                    const SizedBox(height: 8),
-                    BlocBuilder<AuthBloc, AuthState>(
-                      buildWhen: (p, c) => p.busy != c.busy,
-                      builder: (context, st) => FilledButton(
-                        onPressed: st.busy
-                            ? null
-                            : () {
-                                if (_form.currentState!.validate()) {
-                                  context.read<AuthBloc>().add(SignUpSubmitted(
-                                      email: _email.text,
-                                      password: _pass.text,
-                                      username: _user.text,
-                                      fullName: _name.text));
-                                }
-                              },
-                        child: st.busy
-                            ? const SizedBox(
-                                height: 22,
-                                width: 22,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2))
-                            : Text(context.t('create')),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(context.t('have_account'),
-                            style: TextStyle(
-                                color: c.primary,
-                                fontWeight: FontWeight.w600))),
-                  ]),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Text(context.t('signup'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 24),
+                AppTextField(controller: _user, label: context.t('username'), ltr: true, onChanged: _check, helper: helper, helperColor: helperColor,
+                    validator: (v) => !_rx.hasMatch((v ?? '').trim()) ? context.t('username_rules') : (_available == false ? context.t('username_taken') : null)),
+                AppTextField(controller: _name, label: context.t('full_name'), validator: (v) => vReq(context, v)),
+                AppTextField(controller: _email, label: context.t('email'), ltr: true, keyboard: TextInputType.emailAddress, validator: (v) => vEmail(context, v)),
+                AppTextField(controller: _pass, label: context.t('password'), obscure: true, validator: (v) => vPass(context, v)),
+                const SizedBox(height: 8),
+                BlocBuilder<AuthBloc, AuthState>(
+                  buildWhen: (p, c) => p.busy != c.busy,
+                  builder: (context, st) => FilledButton(
+                    onPressed: st.busy ? null : () {
+                      if (_form.currentState!.validate()) {
+                        context.read<AuthBloc>().add(SignUpSubmitted(email: _email.text, password: _pass.text, username: _user.text, fullName: _name.text));
+                      }
+                    },
+                    child: st.busy ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2)) : Text(context.t('create')),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextButton(onPressed: () => Navigator.pop(context), child: Text(context.t('have_account'), style: TextStyle(color: c.primary, fontWeight: FontWeight.w600))),
+              ]),
             ),
           ),
         ),
       ),
     );
   }
+}
+
+class ChangePasswordPage extends StatefulWidget {
+  const ChangePasswordPage({super.key});
+  @override
+  State<ChangePasswordPage> createState() => _ChangePasswordPageState();
+}
+
+class _ChangePasswordPageState extends State<ChangePasswordPage> {
+  final _form = GlobalKey<FormState>();
+  final _new = TextEditingController(), _confirm = TextEditingController();
+  @override
+  void dispose() { _new.dispose(); _confirm.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => BlocListener<AuthBloc, AuthState>(
+        listenWhen: (p, c) => c.notice == 'password_updated' && p.notice != c.notice,
+        listener: (context, st) => Navigator.pop(context),
+        child: _AuthListener(
+          child: Scaffold(
+            appBar: AppBar(title: Text(context.t('change_password'))),
+            body: KeyboardSafeBody(
+              center: false,
+              child: Form(
+                key: _form,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  AppTextField(controller: _new, label: context.t('new_password'), obscure: true, validator: (v) => vPass(context, v)),
+                  AppTextField(controller: _confirm, label: context.t('confirm_password'), obscure: true,
+                      validator: (v) => v != _new.text ? context.t('passwords_mismatch') : null),
+                  const SizedBox(height: 8),
+                  BlocBuilder<AuthBloc, AuthState>(
+                    buildWhen: (p, c) => p.busy != c.busy,
+                    builder: (context, st) => FilledButton(
+                      onPressed: st.busy ? null : () {
+                        if (_form.currentState!.validate()) context.read<AuthBloc>().add(PasswordChangeSubmitted(_new.text));
+                      },
+                      child: st.busy ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2)) : Text(context.t('update_password')),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      );
 }
