@@ -1,3 +1,4 @@
+import '../../domain/new_media.dart';
 import '../models/post_model.dart';
 
 abstract class PostRemoteDataSource {
@@ -7,4 +8,5 @@ abstract class PostRemoteDataSource {
 
   /// Deletes the row (cascade) and removes its files from storage.
   Future<void> deletePost(String postId);
+  Future<void> createPost({required String caption, required List<NewMedia> media, void Function(int done, int total)? onProgress});
 }

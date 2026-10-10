@@ -10,6 +10,7 @@ abstract class ProfileRemoteDataSource {
   Future<List<UserSummaryModel>> followers(String userId, int offset);
   Future<List<UserSummaryModel>> following(String userId, int offset);
   Future<List<UserSummaryModel>> followRequests();
+  Future<List<UserSummaryModel>> searchUsers(String query);
   Future<void> respondToRequest(String followerId, bool accept);
   Future<void> removeFollower(String followerId);
   Future<void> updateProfile({String? fullName, String? bio, String? username});

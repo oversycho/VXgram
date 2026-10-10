@@ -11,6 +11,7 @@ class FeedRefreshed extends FeedEvent { const FeedRefreshed([this.done]); final 
 class FeedLoadMore extends FeedEvent { const FeedLoadMore(); }
 class FeedLikeToggled extends FeedEvent { const FeedLikeToggled(this.postId); final String postId; }
 class FeedPostDeleted extends FeedEvent { const FeedPostDeleted(this.postId); final String postId; }
+class FeedCommentCountChanged extends FeedEvent { const FeedCommentCountChanged(this.postId, this.delta); final String postId; final int delta; }
 
 enum FeedStatus { initial, loading, success, failure }
 
@@ -32,6 +33,9 @@ class FeedBloc extends Bloc<FeedEvent, FeedState> {
     on<FeedLoadMore>(_more);
     on<FeedLikeToggled>(_like);
     on<FeedPostDeleted>(_delete);
+    on<FeedCommentCountChanged>((e, emit) => emit(state.copyWith(posts: [
+      for (final p in state.posts)
+        if (p.id == e.postId) p.copyWith(commentsCount: p.commentsCount + e.delta < 0 ? 0 : p.commentsCount + e.delta) else p])));
   }
   final PostRepository _repo; final String scope; final String? author;
   static const _page = 15;

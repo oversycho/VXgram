@@ -23,6 +23,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
   @override
   Future<List<UserSummary>> followRequests() => guard(_ds.followRequests);
   @override
+  Future<List<UserSummary>> searchUsers(String q) => guard(() => _ds.searchUsers(q));
+  @override
   Future<void> respondToRequest(String followerId, {required bool accept}) => guard(() => _ds.respondToRequest(followerId, accept));
   @override
   Future<void> removeFollower(String id) => guard(() => _ds.removeFollower(id));

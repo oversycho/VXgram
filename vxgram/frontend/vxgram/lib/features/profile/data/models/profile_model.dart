@@ -15,8 +15,8 @@ class ProfileModel extends Profile {
 }
 
 class UserSummaryModel extends UserSummary {
-  const UserSummaryModel({required super.id, required super.username, super.fullName, super.avatarUrl, super.iFollow});
+  const UserSummaryModel({required super.id, required super.username, super.fullName, super.avatarUrl, super.iFollow, super.isPrivate});
   factory UserSummaryModel.fromJson(Map<String, dynamic> j) => UserSummaryModel(
       id: j['id'], username: j['username'].toString(), fullName: j['full_name'], avatarUrl: j['avatar_url'],
-      iFollow: FollowStatus.parse(j['i_follow'] as String?));
+      iFollow: FollowStatus.parse(j['i_follow'] as String?), isPrivate: j['is_private'] ?? false);
 }

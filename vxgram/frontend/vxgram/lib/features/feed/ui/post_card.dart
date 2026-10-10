@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../../core/env.dart';
 import '../../../core/l10n/app_strings.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/common.dart';
+import '../../comments/ui/comments_sheet.dart';
 import '../../profile/ui/profile_page.dart';
+import '../../share/ui/share_sheet.dart';
 import '../bloc/feed_bloc.dart';
 import '../domain/post.dart';
 import '../domain/post_repository.dart';
@@ -44,6 +45,19 @@ class _PostCardState extends State<PostCard> {
     );
     if (ok == true) bloc.add(FeedPostDeleted(widget.post.id));
   }
+
+  void _openComments() {
+    final bloc = context.read<FeedBloc>();
+    final p = widget.post;
+    showModalBottomSheet(
+      context: context, isScrollControlled: true,
+      builder: (_) => CommentsSheet(postId: p.id, postOwnerId: p.userId, onCountChanged: (d) => bloc.add(FeedCommentCountChanged(p.id, d))),
+    );
+  }
+
+  void _openShare() => showModalBottomSheet(
+      context: context, isScrollControlled: true,
+      builder: (_) => ShareSheet(postId: widget.post.id, link: Env.postLink(widget.post.id)));
 
   @override
   Widget build(BuildContext context) {
@@ -99,10 +113,10 @@ class _PostCardState extends State<PostCard> {
             icon: Icon(p.likedByMe ? Icons.favorite : Icons.favorite_border, color: p.likedByMe ? c.pink : null),
             onPressed: () => context.read<FeedBloc>().add(FeedLikeToggled(p.id)),
           ),
-          IconButton(icon: const Icon(Icons.chat_bubble_outline), onPressed: () {/* comments sheet: next step */}),
+          IconButton(icon: const Icon(Icons.chat_bubble_outline), onPressed: _openComments),
           // flip the plane icon in RTL
           IconButton(icon: Transform.flip(flipX: Directionality.of(context) == TextDirection.rtl, child: const Icon(Icons.send_outlined)),
-              onPressed: () => Share.share(link)),
+              onPressed: _openShare),
           IconButton(icon: const Icon(Icons.link), onPressed: () async {
             await Clipboard.setData(ClipboardData(text: link));
             if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('link_copied'))));
@@ -115,8 +129,13 @@ class _PostCardState extends State<PostCard> {
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
           child: Text.rich(TextSpan(children: [TextSpan(text: '${p.username} ', style: const TextStyle(fontWeight: FontWeight.w700)), TextSpan(text: p.caption)])),
         ),
-      if (p.commentsCount > 0)
-        Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text(s.fmt('view_comments_n', {'n': p.commentsCount}), style: TextStyle(color: c.muted))),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+        child: GestureDetector(
+          onTap: _openComments,
+          child: Text(p.commentsCount > 0 ? s.fmt('view_comments_n', {'n': p.commentsCount}) : context.t('add_comment'), style: TextStyle(color: c.muted)),
+        ),
+      ),
       const SizedBox(height: 20),
     ]);
   }

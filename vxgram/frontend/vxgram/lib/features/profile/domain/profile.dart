@@ -17,10 +17,10 @@ class Profile extends Equatable {
 }
 
 class UserSummary extends Equatable {
-  const UserSummary({required this.id, required this.username, this.fullName, this.avatarUrl, this.iFollow = FollowStatus.none});
-  final String id, username; final String? fullName, avatarUrl; final FollowStatus iFollow;
-  UserSummary copyWith({FollowStatus? iFollow}) =>
-      UserSummary(id: id, username: username, fullName: fullName, avatarUrl: avatarUrl, iFollow: iFollow ?? this.iFollow);
+  const UserSummary({required this.id, required this.username, this.fullName, this.avatarUrl, this.iFollow = FollowStatus.none, this.isPrivate = false});
+  final String id, username; final String? fullName, avatarUrl; final FollowStatus iFollow; final bool isPrivate;
+  UserSummary copyWith({FollowStatus? iFollow}) => UserSummary(
+      id: id, username: username, fullName: fullName, avatarUrl: avatarUrl, iFollow: iFollow ?? this.iFollow, isPrivate: isPrivate);
   @override
   List<Object?> get props => [id, iFollow];
 }

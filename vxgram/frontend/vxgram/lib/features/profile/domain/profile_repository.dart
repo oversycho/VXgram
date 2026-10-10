@@ -11,6 +11,7 @@ abstract class ProfileRepository {
   Future<List<UserSummary>> followers(String userId, {int offset = 0});
   Future<List<UserSummary>> following(String userId, {int offset = 0});
   Future<List<UserSummary>> followRequests();
+  Future<List<UserSummary>> searchUsers(String query);
   Future<void> respondToRequest(String followerId, {required bool accept});
   Future<void> removeFollower(String followerId);
 

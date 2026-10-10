@@ -19,8 +19,9 @@ import 'user_list_page.dart';
 
 /// [userId] == null -> the signed-in user's own profile.
 class ProfilePage extends StatelessWidget {
-  const ProfilePage({super.key, this.userId});
+  const ProfilePage({super.key, this.userId, this.refresh});
   final String? userId;
+  final Listenable? refresh; // own profile: ticks when a post was created
 
   @override
   Widget build(BuildContext context) {
@@ -31,13 +32,14 @@ class ProfilePage extends StatelessWidget {
         // posts load when the profile says canView == true (see listener below)
         BlocProvider(create: (c) => FeedBloc(c.read<PostRepository>(), scope: 'profile', author: id)),
       ],
-      child: const _ProfileView(),
+      child: _ProfileView(refresh: refresh),
     );
   }
 }
 
 class _ProfileView extends StatefulWidget {
-  const _ProfileView();
+  const _ProfileView({this.refresh});
+  final Listenable? refresh;
   @override
   State<_ProfileView> createState() => _ProfileViewState();
 }
@@ -47,12 +49,19 @@ class _ProfileViewState extends State<_ProfileView> {
   @override
   void initState() {
     super.initState();
+    widget.refresh?.addListener(_onRefresh);
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) context.read<FeedBloc>().add(const FeedLoadMore());
     });
   }
   @override
-  void dispose() { _scroll.dispose(); super.dispose(); }
+  void _onRefresh() {
+    context.read<ProfileBloc>().add(const ProfileRefreshed());
+    context.read<FeedBloc>().add(const FeedRefreshed());
+  }
+
+  @override
+  void dispose() { widget.refresh?.removeListener(_onRefresh); _scroll.dispose(); super.dispose(); }
 
   Future<void> _refresh() async {
     final a = Completer<void>(), b = Completer<void>();

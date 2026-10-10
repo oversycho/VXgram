@@ -9,16 +9,18 @@ import '../domain/post_repository.dart';
 import 'post_card.dart';
 
 class FeedPage extends StatelessWidget {
-  const FeedPage({super.key});
+  const FeedPage({super.key, this.refresh});
+  final Listenable? refresh; // ticks when a post was created
   @override
   Widget build(BuildContext context) => BlocProvider(
         create: (c) => FeedBloc(c.read<PostRepository>())..add(const FeedStarted()),
-        child: const _FeedView(),
+        child: _FeedView(refresh: refresh),
       );
 }
 
 class _FeedView extends StatefulWidget {
-  const _FeedView();
+  const _FeedView({this.refresh});
+  final Listenable? refresh;
   @override
   State<_FeedView> createState() => _FeedViewState();
 }
@@ -28,12 +30,15 @@ class _FeedViewState extends State<_FeedView> {
   @override
   void initState() {
     super.initState();
+    widget.refresh?.addListener(_onRefresh);
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 600) context.read<FeedBloc>().add(const FeedLoadMore());
     });
   }
   @override
-  void dispose() { _scroll.dispose(); super.dispose(); }
+  void _onRefresh() => context.read<FeedBloc>().add(const FeedRefreshed());
+  @override
+  void dispose() { widget.refresh?.removeListener(_onRefresh); _scroll.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {

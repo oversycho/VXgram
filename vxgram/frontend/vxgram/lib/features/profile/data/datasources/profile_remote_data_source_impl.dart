@@ -42,6 +42,9 @@ class ProfileRemoteDataSourceImpl implements ProfileRemoteDataSource {
   Future<List<UserSummaryModel>> followRequests() async => _users(await _c.rpc('follow_requests'));
 
   @override
+  Future<List<UserSummaryModel>> searchUsers(String query) async => _users(await _c.rpc('search_users', params: {'q': query, 'p_limit': 30}));
+
+  @override
   Future<void> respondToRequest(String followerId, bool accept) async {
     await _c.rpc('respond_follow_request', params: {'p_follower': followerId, 'p_accept': accept});
   }
