@@ -7,6 +7,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/common.dart';
 import '../../comments/ui/comments_sheet.dart';
 import '../../profile/ui/profile_page.dart';
+import '../../saved/bloc/saved_cubit.dart';
 import '../../share/ui/share_sheet.dart';
 import '../bloc/feed_bloc.dart';
 import '../domain/post.dart';
@@ -86,7 +87,7 @@ class _PostCardState extends State<PostCard> {
         child: Stack(children: [
           PageView.builder(
             itemCount: p.media.length, onPageChanged: (i) => setState(() => _page = i),
-            itemBuilder: (_, i) => MediaTile(url: p.media[i].url, isVideo: p.media[i].isVideo),
+            itemBuilder: (_, i) => MediaTile(url: p.media[i].url, isVideo: p.media[i].isVideo, thumbUrl: p.media[i].thumbUrl),
           ),
           if (p.media.length > 1)
             PositionedDirectional(top: 12, end: 12, child: Container(
@@ -121,6 +122,18 @@ class _PostCardState extends State<PostCard> {
             await Clipboard.setData(ClipboardData(text: link));
             if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('link_copied'))));
           }),
+          const Spacer(),
+          BlocSelector<SavedCubit, SavedState, bool>(
+            selector: (st) => st.ids.contains(p.id),
+            builder: (context, saved) => IconButton(
+              icon: Icon(saved ? Icons.bookmark : Icons.bookmark_border, color: saved ? c.primary : null),
+              onPressed: () async {
+                final cubit = context.read<SavedCubit>();
+                final messenger = ScaffoldMessenger.of(context);
+                if (!await cubit.toggle(p.id)) messenger.showSnackBar(SnackBar(content: Text(cubit.state.error ?? '')));
+              },
+            ),
+          ),
         ]),
       ),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text(s.fmt('likes_n', {'n': p.likesCount}), style: const TextStyle(fontWeight: FontWeight.w700))),

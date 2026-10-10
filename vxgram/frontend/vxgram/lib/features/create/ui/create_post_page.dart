@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/common.dart';
 import '../../feed/domain/new_media.dart';
 import '../../feed/domain/post_repository.dart';
+import '../../feed/domain/thumbnail_generator.dart';
 import '../bloc/create_post_bloc.dart';
 
 class CreatePostPage extends StatelessWidget {
@@ -36,22 +37,24 @@ class _CreateViewState extends State<_CreateView> {
     final remaining = NewMedia.maxItems - bloc.state.media.length;
     if (remaining <= 0) { messenger.showSnackBar(SnackBar(content: Text(context.t('max_media')))); return; }
     final unsupported = context.t('unsupported_file'), tooLarge = context.t('file_too_large');
+    final generator = context.read<ThumbnailGenerator>();
     final picker = ImagePicker();
     List<XFile> files;
     if (remaining == 1) {
-      final one = await picker.pickMedia();
+      final one = await picker.pickMedia(maxWidth: 1440, imageQuality: 85);
       files = one == null ? [] : [one];
     } else {
-      files = await picker.pickMultipleMedia(limit: remaining);
+      files = await picker.pickMultipleMedia(limit: remaining, maxWidth: 1440, imageQuality: 85);
     }
     final items = <NewMedia>[];
     for (final f in files) {
       final ext = f.name.contains('.') ? f.name.split('.').last : '';
       final bytes = await f.readAsBytes();
-      final m = NewMedia(bytes: bytes, ext: ext);
-      if (!m.isSupported) { messenger.showSnackBar(SnackBar(content: Text(unsupported))); continue; }
+      final probe = NewMedia(bytes: bytes, ext: ext);
+      if (!probe.isSupported) { messenger.showSnackBar(SnackBar(content: Text(unsupported))); continue; }
       if (bytes.length > NewMedia.maxBytes) { messenger.showSnackBar(SnackBar(content: Text(tooLarge))); continue; }
-      items.add(m);
+      final thumb = await generator.create(path: f.path, bytes: bytes, ext: ext);
+      items.add(NewMedia(bytes: bytes, ext: ext, thumbBytes: thumb));
     }
     if (items.isNotEmpty && !bloc.isClosed) bloc.add(MediaAdded(items));
   }
@@ -98,7 +101,9 @@ class _CreateViewState extends State<_CreateView> {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
                             child: SizedBox(width: 112, height: 112, child: st.media[i].isVideo
-                                ? Container(color: c.surface, child: Icon(Icons.videocam, size: 36, color: c.muted))
+                                ? (st.media[i].thumbBytes != null
+                                    ? Stack(fit: StackFit.expand, children: [Image.memory(st.media[i].thumbBytes!, fit: BoxFit.cover), const Center(child: Icon(Icons.play_circle_outline, color: Colors.white, size: 32))])
+                                    : Container(color: c.surface, child: Icon(Icons.videocam, size: 36, color: c.muted)))
                                 : Image.memory(st.media[i].bytes, fit: BoxFit.cover, cacheWidth: 300)),
                           ),
                           PositionedDirectional(top: 4, end: 4, child: GestureDetector(

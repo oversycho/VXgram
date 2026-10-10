@@ -6,6 +6,8 @@ import 'core/theme/app_theme.dart';
 import 'core/widgets/common.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/ui/auth_pages.dart';
+import 'features/onboarding/onboarding_page.dart';
+import 'features/saved/bloc/saved_cubit.dart';
 import 'features/settings/settings_cubit.dart';
 import 'features/settings/settings_pages.dart';
 import 'features/shell/main_shell.dart';
@@ -30,7 +32,11 @@ class VxApp extends StatelessWidget {
         home: BlocListener<AuthBloc, AuthState>(
           listenWhen: (p, c) => p.status != c.status,
           // drop pushed pages (sign-up, settings) when auth state flips
-          listener: (_, __) => navigatorKey.currentState?.popUntil((r) => r.isFirst),
+          listener: (ctx, a) {
+            navigatorKey.currentState?.popUntil((r) => r.isFirst);
+            final saved = ctx.read<SavedCubit>();
+            a.status == AuthStatus.authenticated ? saved.load() : saved.clear();
+          },
           child: BlocBuilder<AuthBloc, AuthState>(
             buildWhen: (p, c) => p.status != c.status,
             builder: (context, auth) {
@@ -38,7 +44,7 @@ class VxApp extends StatelessWidget {
               switch (auth.status) {
                 case AuthStatus.unknown: return const Scaffold(body: Center(child: Logo(size: 40)));
                 case AuthStatus.authenticated: return const MainShell();
-                case AuthStatus.unauthenticated: return const LoginPage();
+                case AuthStatus.unauthenticated: return st.onboarded ? const LoginPage() : const OnboardingPage();
               }
             },
           ),

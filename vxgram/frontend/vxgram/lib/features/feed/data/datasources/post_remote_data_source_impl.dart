@@ -17,6 +17,10 @@ class PostRemoteDataSourceImpl implements PostRemoteDataSource {
       final one = await _c.rpc('get_post', params: {'p_post': author});
       return (one as List).map((e) => PostModel.fromJson(Map<String, dynamic>.from(e))).toList();
     }
+    if (scope == 'saved') {
+      final res = await _c.rpc('get_saved_posts', params: {'p_limit': limit, 'p_before': before?.toUtc().toIso8601String()});
+      return (res as List).map((e) => PostModel.fromJson(Map<String, dynamic>.from(e))).toList();
+    }
     final res = await _c.rpc('get_posts', params: {
       'p_scope': scope, 'p_author': author, 'p_limit': limit, 'p_before': before?.toUtc().toIso8601String(),
     });
@@ -56,8 +60,16 @@ class PostRemoteDataSourceImpl implements PostRemoteDataSource {
         final path = '$uid/$postId/$i.$ext';
         await _c.storage.from('posts').uploadBinary(path, m.bytes, fileOptions: FileOptions(contentType: _mime(ext)));
         uploaded.add(path);
+        String? thumbPath, thumbUrl;
+        if (m.thumbBytes != null) {
+          thumbPath = '$uid/$postId/${i}_thumb.jpg';
+          await _c.storage.from('posts').uploadBinary(thumbPath, m.thumbBytes!, fileOptions: const FileOptions(contentType: 'image/jpeg'));
+          uploaded.add(thumbPath);
+          thumbUrl = _c.storage.from('posts').getPublicUrl(thumbPath);
+        }
         await _c.from('post_media').insert({
           'post_id': postId, 'user_id': uid, 'storage_path': path, 'url': _c.storage.from('posts').getPublicUrl(path),
+          'thumb_path': thumbPath, 'thumb_url': thumbUrl,
           'media_type': m.isVideo ? 'video' : 'image', 'position': i,
         });
         onProgress?.call(i + 1, media.length);

@@ -42,8 +42,9 @@ class Avatar extends StatelessWidget {
 
 /// Image or video for a post. Video: tap to play/pause. [play]=false shows a placeholder (grids).
 class MediaTile extends StatefulWidget {
-  const MediaTile({super.key, required this.url, required this.isVideo, this.play = true});
+  const MediaTile({super.key, required this.url, required this.isVideo, this.play = true, this.thumbUrl});
   final String url; final bool isVideo, play;
+  final String? thumbUrl; // small preview; grids (play: false) show it instead of the full file
   @override
   State<MediaTile> createState() => _MediaTileState();
 }
@@ -65,12 +66,22 @@ class _MediaTileState extends State<MediaTile> {
   @override
   Widget build(BuildContext context) {
     final c = VxColors.of(context);
-    if (widget.isVideo && !widget.play) {
-      return Container(color: c.surface, child: Icon(Icons.play_circle_outline, color: c.muted, size: 32));
+    if (!widget.play) {
+      // grid / list preview: tiny decoded image. Videos without a thumbnail get a placeholder.
+      final src = widget.thumbUrl ?? (widget.isVideo ? null : widget.url);
+      if (src == null) return Container(color: c.surface, child: Icon(Icons.play_circle_outline, color: c.muted, size: 32));
+      return CachedNetworkImage(imageUrl: src, fit: BoxFit.cover, width: double.infinity, height: double.infinity, memCacheWidth: 400,
+          placeholder: (_, __) => Container(color: c.surface),
+          errorWidget: (_, __, ___) => Container(color: c.surface, child: Icon(Icons.broken_image_outlined, color: c.muted)));
     }
     if (widget.isVideo) {
       final v = _v;
-      if (v == null || !v.value.isInitialized) return Container(color: c.surface, child: const Center(child: CircularProgressIndicator()));
+      if (v == null || !v.value.isInitialized) {
+        return Stack(fit: StackFit.expand, children: [
+          if (widget.thumbUrl != null) CachedNetworkImage(imageUrl: widget.thumbUrl!, fit: BoxFit.cover) else Container(color: c.surface),
+          const Center(child: CircularProgressIndicator()),
+        ]);
+      }
       return GestureDetector(
         onTap: () => setState(() => v.value.isPlaying ? v.pause() : v.play()),
         child: Stack(alignment: Alignment.center, fit: StackFit.expand, children: [

@@ -64,6 +64,10 @@ class AppStrings {
       'uploading_n': 'Uploading {done} of {total}…', 'file_too_large': 'File too large (max 100 MB)',
       'unsupported_file': 'Unsupported file type (use JPG, PNG, WEBP, MP4, MOV or WEBM)', 'post_unavailable': 'This post is no longer available',
       'post_created': 'Post shared', 'max_media': 'Up to 10 items per post',
+      'saved': 'Saved', 'no_saved': 'Nothing saved yet', 'load_more': 'Load more', 'skip': 'Skip', 'next': 'Next', 'get_started': 'Get started',
+      'onb1_title': 'Share moments', 'onb1_body': 'Post photos and videos for the people who matter to you.',
+      'onb2_title': 'Follow people you love', 'onb2_body': 'See what your friends and favourite creators are up to.',
+      'onb3_title': 'Explore the world', 'onb3_body': 'Discover new accounts and ideas every day.',
     },
     'fa': {
       'welcome': 'دوباره خوش آمدید', 'login': 'ورود', 'signup': 'ثبت‌نام', 'email': 'ایمیل', 'password': 'رمز عبور',
@@ -96,6 +100,10 @@ class AppStrings {
       'uploading_n': 'در حال آپلود {done} از {total}…', 'file_too_large': 'حجم فایل زیاد است (حداکثر ۱۰۰ مگابایت)',
       'unsupported_file': 'نوع فایل پشتیبانی نمی‌شود (JPG، PNG، WEBP، MP4، MOV یا WEBM)', 'post_unavailable': 'این پست دیگر در دسترس نیست',
       'post_created': 'پست منتشر شد', 'max_media': 'حداکثر ۱۰ مورد در هر پست',
+      'saved': 'ذخیره‌شده', 'no_saved': 'هنوز چیزی ذخیره نشده', 'load_more': 'نمایش بیشتر', 'skip': 'رد کردن', 'next': 'بعدی', 'get_started': 'شروع کنید',
+      'onb1_title': 'لحظه‌هایت را به اشتراک بگذار', 'onb1_body': 'عکس و ویدیو را برای کسانی که برایت مهم‌اند منتشر کن.',
+      'onb2_title': 'کسانی را که دوست داری دنبال کن', 'onb2_body': 'ببین دوستان و سازندگان مورد علاقه‌ات چه می‌کنند.',
+      'onb3_title': 'دنیا را کاوش کن', 'onb3_body': 'هر روز حساب‌ها و ایده‌های تازه کشف کن.',
     },
   };
 }

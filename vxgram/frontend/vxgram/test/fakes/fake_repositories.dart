@@ -8,6 +8,7 @@ import 'package:vxgram/features/feed/domain/post.dart';
 import 'package:vxgram/features/feed/domain/post_repository.dart';
 import 'package:vxgram/features/profile/domain/profile.dart';
 import 'package:vxgram/features/profile/domain/profile_repository.dart';
+import 'package:vxgram/features/saved/domain/saved_repository.dart';
 import 'package:vxgram/features/share/domain/inbox_item.dart';
 import 'package:vxgram/features/share/domain/share_repository.dart';
 
@@ -95,4 +96,15 @@ class FakeShareRepository implements ShareRepository {
   @override Future<int> sharePost(String postId, List<String> receiverIds, {String? message}) async { sent.add(receiverIds); lastMessage = message; return receiverIds.length; }
   @override Future<List<InboxItem>> inbox() async => [];
   @override Future<void> markSeen(String shareId) async {}
+}
+
+// ---------------- saved ----------------
+class FakeSavedRepository implements SavedRepository {
+  FakeSavedRepository({Set<String>? initial, this.fail = false}) : ids = {...?initial};
+  final Set<String> ids; final bool fail;
+  @override Future<Set<String>> savedIds() async => {...ids};
+  @override Future<bool> toggle(String postId) async {
+    if (fail) throw AppFailure('offline');
+    return ids.add(postId) || !ids.remove(postId);
+  }
 }

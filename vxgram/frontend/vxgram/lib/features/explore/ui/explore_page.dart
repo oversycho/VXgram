@@ -122,7 +122,7 @@ class _Thumb extends StatelessWidget {
         Navigator.push(context, MaterialPageRoute(builder: (_) => BlocProvider.value(value: feed, child: PostsViewerPage(startId: post.id))));
       },
       child: Stack(fit: StackFit.expand, children: [
-        if (first != null) MediaTile(url: first.url, isVideo: first.isVideo, play: false) else Container(color: VxColors.of(context).surface),
+        if (first != null) MediaTile(url: first.url, isVideo: first.isVideo, play: false, thumbUrl: first.thumbUrl) else Container(color: VxColors.of(context).surface),
         if (post.media.length > 1)
           const PositionedDirectional(top: 6, end: 6, child: Icon(Icons.collections, size: 16, color: Colors.white, shadows: [Shadow(blurRadius: 4)])),
         if (post.media.length == 1 && first!.isVideo)

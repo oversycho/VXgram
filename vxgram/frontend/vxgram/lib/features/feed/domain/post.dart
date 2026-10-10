@@ -2,8 +2,9 @@ import 'package:equatable/equatable.dart';
 
 /// Pure entities: no JSON, no backend types.
 class MediaItem extends Equatable {
-  const MediaItem({required this.id, required this.url, required this.isVideo, required this.position, this.width, this.height});
+  const MediaItem({required this.id, required this.url, required this.isVideo, required this.position, this.width, this.height, this.thumbUrl});
   final String id, url; final bool isVideo; final int position; final int? width, height;
+  final String? thumbUrl; // small preview used by grids
   @override
   List<Object?> get props => [id, url];
 }

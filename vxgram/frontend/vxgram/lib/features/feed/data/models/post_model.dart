@@ -13,5 +13,5 @@ class PostModel extends Post {
       );
 
   static MediaItem _media(Map<String, dynamic> m) => MediaItem(
-      id: m['id'], url: m['url'], isVideo: m['type'] == 'video', position: m['position'] ?? 0, width: m['width'], height: m['height']);
+      id: m['id'], url: m['url'], isVideo: m['type'] == 'video', position: m['position'] ?? 0, width: m['width'], height: m['height'], thumbUrl: m['thumb_url']);
 }

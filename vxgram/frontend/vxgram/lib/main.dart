@@ -11,12 +11,18 @@ import 'features/auth/domain/auth_repository.dart';
 import 'features/comments/data/datasources/comment_remote_data_source_impl.dart';
 import 'features/comments/data/repositories/comment_repository_impl.dart';
 import 'features/comments/domain/comment_repository.dart';
+import 'features/create/data/thumbnail_generator_impl.dart';
 import 'features/feed/data/datasources/post_remote_data_source_impl.dart';
 import 'features/feed/data/repositories/post_repository_impl.dart';
 import 'features/feed/domain/post_repository.dart';
+import 'features/feed/domain/thumbnail_generator.dart';
 import 'features/profile/data/datasources/profile_remote_data_source_impl.dart';
 import 'features/profile/data/repositories/profile_repository_impl.dart';
 import 'features/profile/domain/profile_repository.dart';
+import 'features/saved/bloc/saved_cubit.dart';
+import 'features/saved/data/datasources/saved_remote_data_source_impl.dart';
+import 'features/saved/data/repositories/saved_repository_impl.dart';
+import 'features/saved/domain/saved_repository.dart';
 import 'features/settings/settings_cubit.dart';
 import 'features/share/data/datasources/share_remote_data_source_impl.dart';
 import 'features/share/data/repositories/share_repository_impl.dart';
@@ -40,15 +46,18 @@ Future<void> main() async {
   final PostRepository postRepo = PostRepositoryImpl(PostRemoteDataSourceImpl(client));
   final CommentRepository commentRepo = CommentRepositoryImpl(CommentRemoteDataSourceImpl(client));
   final ShareRepository shareRepo = ShareRepositoryImpl(ShareRemoteDataSourceImpl(client));
+  final ThumbnailGenerator thumbnails = ThumbnailGeneratorImpl();
+  final SavedRepository savedRepo = SavedRepositoryImpl(SavedRemoteDataSourceImpl(client));
   final ProfileRepository profileRepo = ProfileRepositoryImpl(ProfileRemoteDataSourceImpl(client));
 
   runApp(MultiRepositoryProvider(
     providers: [RepositoryProvider<AuthRepository>.value(value: authRepo), RepositoryProvider<PostRepository>.value(value: postRepo), RepositoryProvider<ProfileRepository>.value(value: profileRepo),
-      RepositoryProvider<CommentRepository>.value(value: commentRepo), RepositoryProvider<ShareRepository>.value(value: shareRepo)],
+      RepositoryProvider<CommentRepository>.value(value: commentRepo), RepositoryProvider<SavedRepository>.value(value: savedRepo), RepositoryProvider<ThumbnailGenerator>.value(value: thumbnails), RepositoryProvider<ShareRepository>.value(value: shareRepo)],
     child: MultiBlocProvider(
       providers: [
         BlocProvider(create: (_) => SettingsCubit(prefs)),
         BlocProvider(create: (_) => AuthBloc(authRepo)..add(const AuthStarted())),
+        BlocProvider(create: (_) => SavedCubit(savedRepo)),
       ],
       child: const VxApp(),
     ),

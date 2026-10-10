@@ -2,8 +2,9 @@ import 'dart:typed_data';
 
 /// A picked file waiting to be uploaded (kept as bytes so it works on every platform).
 class NewMedia {
-  const NewMedia({required this.bytes, required this.ext});
+  const NewMedia({required this.bytes, required this.ext, this.thumbBytes});
   final Uint8List bytes; final String ext;
+  final Uint8List? thumbBytes; // small JPEG made at pick time (optional)
 
   static const imageExts = {'jpg', 'jpeg', 'png', 'webp'};
   static const videoExts = {'mp4', 'mov', 'webm'};

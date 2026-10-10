@@ -46,6 +46,7 @@ class _ProfileView extends StatefulWidget {
 
 class _ProfileViewState extends State<_ProfileView> {
   final _scroll = ScrollController();
+  int _tab = 0, _savedKey = 0; // 0 = my posts, 1 = saved posts
   @override
   void initState() {
     super.initState();
@@ -124,7 +125,11 @@ class _ProfileViewState extends State<_ProfileView> {
                   slivers: [
                     SliverToBoxAdapter(child: _Header(p: p, busy: st.busy)),
                     const SliverToBoxAdapter(child: Divider()),
-                    if (!p.canView)
+                    if (p.isMe)
+                      SliverToBoxAdapter(child: _Tabs(index: _tab, onChanged: (i) => setState(() { _tab = i; if (i == 1) _savedKey++; }))),
+                    if (p.isMe && _tab == 1)
+                      SliverToBoxAdapter(child: _SavedGrid(key: ValueKey(_savedKey)))
+                    else if (!p.canView)
                       const SliverToBoxAdapter(child: _Locked())
                     else if (fs.status == FeedStatus.success && fs.posts.isEmpty)
                       SliverToBoxAdapter(child: _EmptyPosts(isMe: p.isMe))
@@ -224,6 +229,70 @@ class _Header extends StatelessWidget {
   }
 }
 
+class _Tabs extends StatelessWidget {
+  const _Tabs({required this.index, required this.onChanged});
+  final int index; final ValueChanged<int> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    final c = VxColors.of(context);
+    Widget tab(int i, IconData icon) => Expanded(
+          child: InkWell(
+            onTap: () => onChanged(i),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: index == i ? c.primary : Colors.transparent, width: 2))),
+              child: Icon(icon, color: index == i ? c.primary : c.muted),
+            ),
+          ),
+        );
+    return Row(children: [tab(0, Icons.grid_on), tab(1, Icons.bookmark_border)]);
+  }
+}
+
+/// My saved posts. Has its own FeedBloc (scope 'saved'); the nearest FeedBloc wins for _Thumb.
+class _SavedGrid extends StatelessWidget {
+  const _SavedGrid({super.key});
+  @override
+  Widget build(BuildContext context) => BlocProvider(
+        create: (c) => FeedBloc(c.read<PostRepository>(), scope: 'saved')..add(const FeedStarted()),
+        child: const _SavedGridView(),
+      );
+}
+
+class _SavedGridView extends StatelessWidget {
+  const _SavedGridView();
+  @override
+  Widget build(BuildContext context) {
+    final c = VxColors.of(context);
+    return BlocBuilder<FeedBloc, FeedState>(
+      builder: (context, fs) {
+        if (fs.status == FeedStatus.initial || fs.status == FeedStatus.loading) {
+          return const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator()));
+        }
+        if (fs.posts.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.all(48),
+            child: Column(children: [
+              Icon(Icons.bookmark_border, size: 56, color: c.muted), const SizedBox(height: 12),
+              Text(fs.error ?? context.t('no_saved'), style: TextStyle(color: c.muted), textAlign: TextAlign.center),
+            ]),
+          );
+        }
+        return Column(children: [
+          GridView.builder(
+            shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 2, crossAxisSpacing: 2),
+            itemCount: fs.posts.length,
+            itemBuilder: (context, i) => _Thumb(post: fs.posts[i]),
+          ),
+          if (fs.loadingMore) const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
+          else if (fs.hasMore) TextButton(onPressed: () => context.read<FeedBloc>().add(const FeedLoadMore()), child: Text(context.t('load_more'))),
+        ]);
+      },
+    );
+  }
+}
+
 class _Locked extends StatelessWidget {
   const _Locked();
   @override
@@ -269,7 +338,7 @@ class _Thumb extends StatelessWidget {
         prof.add(const ProfileRefreshed()); // post count may have changed
       },
       child: Stack(fit: StackFit.expand, children: [
-        if (first != null) MediaTile(url: first.url, isVideo: first.isVideo, play: false) else Container(color: VxColors.of(context).surface),
+        if (first != null) MediaTile(url: first.url, isVideo: first.isVideo, play: false, thumbUrl: first.thumbUrl) else Container(color: VxColors.of(context).surface),
         if (post.media.length > 1)
           const PositionedDirectional(top: 6, end: 6, child: Icon(Icons.collections, size: 16, color: Colors.white, shadows: [Shadow(blurRadius: 4)])),
         if (post.media.length == 1 && first!.isVideo)
