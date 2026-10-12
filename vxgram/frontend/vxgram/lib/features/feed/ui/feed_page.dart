@@ -6,6 +6,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/common.dart';
 import '../bloc/feed_bloc.dart';
 import '../domain/post_repository.dart';
+import '../../notifications/ui/notification_bell.dart';
 import 'post_card.dart';
 
 class FeedPage extends StatelessWidget {
@@ -44,7 +45,7 @@ class _FeedViewState extends State<_FeedView> {
   Widget build(BuildContext context) {
     final c = VxColors.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Logo(size: 24), centerTitle: false, bottom: PreferredSize(preferredSize: const Size.fromHeight(1), child: Divider(color: c.border))),
+      appBar: AppBar(title: const Logo(size: 24), centerTitle: false, actions: const [NotificationBell()], bottom: PreferredSize(preferredSize: const Size.fromHeight(1), child: Divider(color: c.border))),
       body: BlocConsumer<FeedBloc, FeedState>(
         listenWhen: (p, s) => s.error != null && p.error != s.error,
         listener: (context, st) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(st.error!))),

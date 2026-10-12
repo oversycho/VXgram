@@ -68,6 +68,9 @@ class AppStrings {
       'onb1_title': 'Share moments', 'onb1_body': 'Post photos and videos for the people who matter to you.',
       'onb2_title': 'Follow people you love', 'onb2_body': 'See what your friends and favourite creators are up to.',
       'onb3_title': 'Explore the world', 'onb3_body': 'Discover new accounts and ideas every day.',
+      'notifications': 'Notifications', 'no_notifications': 'No notifications yet', 'notif_like': '{u} liked your post',
+      'notif_comment': '{u} commented: {c}', 'notif_follow': '{u} started following you', 'notif_follow_request': '{u} requested to follow you',
+      'notif_follow_accepted': '{u} accepted your follow request',
     },
     'fa': {
       'welcome': 'دوباره خوش آمدید', 'login': 'ورود', 'signup': 'ثبت‌نام', 'email': 'ایمیل', 'password': 'رمز عبور',
@@ -104,6 +107,9 @@ class AppStrings {
       'onb1_title': 'لحظه‌هایت را به اشتراک بگذار', 'onb1_body': 'عکس و ویدیو را برای کسانی که برایت مهم‌اند منتشر کن.',
       'onb2_title': 'کسانی را که دوست داری دنبال کن', 'onb2_body': 'ببین دوستان و سازندگان مورد علاقه‌ات چه می‌کنند.',
       'onb3_title': 'دنیا را کاوش کن', 'onb3_body': 'هر روز حساب‌ها و ایده‌های تازه کشف کن.',
+      'notifications': 'اعلان‌ها', 'no_notifications': 'هنوز اعلانی ندارید', 'notif_like': '{u} پست شما را پسندید',
+      'notif_comment': '{u} نظر داد: {c}', 'notif_follow': '{u} شما را دنبال کرد', 'notif_follow_request': '{u} درخواست دنبال کردن شما را داد',
+      'notif_follow_accepted': '{u} درخواست دنبال کردن شما را پذیرفت',
     },
   };
 }

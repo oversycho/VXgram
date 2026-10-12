@@ -7,6 +7,7 @@ import 'core/widgets/common.dart';
 import 'features/auth/bloc/auth_bloc.dart';
 import 'features/auth/ui/auth_pages.dart';
 import 'features/onboarding/onboarding_page.dart';
+import 'features/notifications/bloc/unread_cubit.dart';
 import 'features/saved/bloc/saved_cubit.dart';
 import 'features/settings/settings_cubit.dart';
 import 'features/settings/settings_pages.dart';
@@ -35,7 +36,8 @@ class VxApp extends StatelessWidget {
           listener: (ctx, a) {
             navigatorKey.currentState?.popUntil((r) => r.isFirst);
             final saved = ctx.read<SavedCubit>();
-            a.status == AuthStatus.authenticated ? saved.load() : saved.clear();
+            final unread = ctx.read<UnreadCubit>();
+            if (a.status == AuthStatus.authenticated) { saved.load(); unread.start(); } else { saved.clear(); unread.stop(); }
           },
           child: BlocBuilder<AuthBloc, AuthState>(
             buildWhen: (p, c) => p.status != c.status,

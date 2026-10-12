@@ -1,0 +1,1400 @@
+diff -ruN -x .git a/README.md b/README.md
+--- a/README.md	2026-10-12 09:43:44.337821236 +0000
++++ b/README.md	2026-10-12 09:43:44.342330905 +0000
+@@ -1,2 +1,38 @@
+-# VXgram
++# VXGram
+ 
++An Instagram-style social app. **Flutter** (BLoC, clean layers) + **Supabase** (Postgres, Auth, Storage).
++English and Farsi (RTL), light and dark mode.
++
++## Features
++- Sign up / log in / reset password / change password, onboarding, language + theme picker
++- Feed with photo + video posts, **slideshow** for multi-media posts, like, comment, copy link, share, bookmark
++- Create post: up to 10 photos/videos, caption, upload progress, thumbnails, rollback on failure
++- Explore grid + username search
++- Profiles: counts, follow / unfollow, **private accounts** with follow requests, followers / following lists,
++  edit profile, avatar, delete own posts, saved posts
++- Share a post to other users, inbox
++- Notifications: likes, comments, follows, follow requests (confirm / delete in the list), unread badge
++
++## Structure
++```
++vxgram/
++  frontend/vxgram/   Flutter app
++  backend/           Supabase migrations (see backend/README.md)
++```
++Each feature in `lib/features/<name>/` is split into:
++`domain/` (repository interface + entities) -> `data/` (data source interface + Supabase implementation, models,
++repository implementation) -> `bloc/` -> `ui/`. `main.dart` is the only file that knows the concrete classes.
++
++## Run
++1. Create a Supabase project and apply the migrations (`vxgram/backend/README.md`).
++2. Put your Project URL and **anon** key in `vxgram/frontend/vxgram/lib/core/env.dart`
++   (or pass `--dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=...`).
++3. ```
++   cd vxgram/frontend/vxgram
++   flutter pub get
++   flutter test
++   flutter run
++   ```
++
++## Tests
++BLoC / cubit tests use fake repositories (`test/fakes/`), so they need no network and no Supabase.
+diff -ruN -x .git a/vxgram/backend/README.md b/vxgram/backend/README.md
+--- a/vxgram/backend/README.md	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/README.md	2026-10-12 09:43:44.345891873 +0000
+@@ -0,0 +1,27 @@
++# VXGram backend (Supabase)
++
++Everything the app needs lives in `supabase/migrations/` and is applied in file-name order.
++
++| File | What it adds |
++|---|---|
++| `...01_schema.sql` | tables: profiles, posts, post_media, likes, comments, follows, post_shares |
++| `...02_triggers.sql` | profile on signup, counters (posts/likes/comments/followers), private -> public auto-approve |
++| `...03_rls.sql` | row level security (private accounts, own-data rules, column grants) |
++| `...04_rpc.sql` | API functions: feed, profile, search, follow, like, comments, share, inbox |
++| `...05_storage_realtime.sql` | buckets `avatars` + `posts`, storage policies |
++| `...06_get_post.sql` | `get_post` (open one shared post) |
++| `...07_saved_posts.sql` | bookmarks: `saved_posts`, `toggle_save`, `get_saved_posts` |
++| `...08_fix_media_trigger.sql` | repair for databases created before the media-trigger fix (harmless on new ones) |
++| `...09_thumbnails.sql` | `thumb_url` / `thumb_path`, RPCs return thumbnails, `delete_post` returns thumb files |
++| `...10_notifications.sql` | notifications table + triggers (like, comment, follow, request, accepted) + RPCs |
++
++## Apply
++**Dashboard:** SQL Editor -> paste each file in order -> Run.
++**CLI:** `npm i -g supabase`, then in `vxgram/backend`: `supabase init` (once), `supabase login`, `supabase link --project-ref <ref>`, `supabase db push`.
++
++Authentication -> Providers -> Email: turn **Confirm email** off while developing.
++
++## Rules worth knowing
++- Counters (`posts_count`, `likes_count`, ...) are maintained by triggers; clients cannot write them.
++- A trigger that runs `BEFORE INSERT` must `return new` (returning `null` silently cancels the insert).
++- Never put the `service_role` key in the app. The anon key is public by design; RLS protects the data.
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000001_schema.sql b/vxgram/backend/supabase/migrations/20260101000001_schema.sql
+--- a/vxgram/backend/supabase/migrations/20260101000001_schema.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000001_schema.sql	2026-10-12 09:43:44.345786255 +0000
+@@ -0,0 +1,87 @@
++-- VXGram schema
++create extension if not exists pg_trgm;
++create extension if not exists citext;
++
++create type public.media_type   as enum ('image','video');
++create type public.follow_status as enum ('pending','accepted');
++
++create table public.profiles (
++  id uuid primary key references auth.users(id) on delete cascade,
++  username citext unique not null check (username::text ~ '^[a-z0-9._]{3,30}$'),
++  full_name text,
++  bio text not null default '' check (char_length(bio) <= 150),
++  avatar_url text,
++  avatar_path text,
++  is_private boolean not null default false,
++  posts_count     int not null default 0,
++  followers_count int not null default 0,
++  following_count int not null default 0,
++  created_at timestamptz not null default now()
++);
++
++create table public.posts (
++  id uuid primary key default gen_random_uuid(),
++  user_id uuid not null references public.profiles(id) on delete cascade,
++  caption text not null default '' check (char_length(caption) <= 2200),
++  media_count    int not null default 0,
++  likes_count    int not null default 0,
++  comments_count int not null default 0,
++  created_at timestamptz not null default now()
++);
++
++create table public.post_media (
++  id uuid primary key default gen_random_uuid(),
++  post_id uuid not null references public.posts(id) on delete cascade,
++  user_id uuid not null references public.profiles(id) on delete cascade,
++  storage_path text not null,
++  url text not null,
++  media_type public.media_type not null,
++  position int not null default 0,
++  width int, height int, duration_ms int,
++  unique (post_id, position)
++);
++
++create table public.likes (
++  post_id uuid references public.posts(id) on delete cascade,
++  user_id uuid references public.profiles(id) on delete cascade,
++  created_at timestamptz not null default now(),
++  primary key (post_id, user_id)
++);
++
++create table public.comments (
++  id uuid primary key default gen_random_uuid(),
++  post_id uuid not null references public.posts(id) on delete cascade,
++  user_id uuid not null references public.profiles(id) on delete cascade,
++  body text not null check (char_length(body) between 1 and 500),
++  created_at timestamptz not null default now()
++);
++
++create table public.follows (
++  follower_id  uuid references public.profiles(id) on delete cascade,
++  following_id uuid references public.profiles(id) on delete cascade,
++  status public.follow_status not null default 'accepted',
++  created_at timestamptz not null default now(),
++  primary key (follower_id, following_id),
++  check (follower_id <> following_id)
++);
++
++-- "send to other users"
++create table public.post_shares (
++  id uuid primary key default gen_random_uuid(),
++  post_id uuid not null references public.posts(id) on delete cascade,
++  sender_id   uuid not null references public.profiles(id) on delete cascade,
++  receiver_id uuid not null references public.profiles(id) on delete cascade,
++  message text check (char_length(message) <= 300),
++  seen boolean not null default false,
++  created_at timestamptz not null default now(),
++  check (sender_id <> receiver_id)
++);
++
++create index on public.posts (user_id, created_at desc);
++create index on public.posts (created_at desc);
++create index on public.post_media (post_id, position);
++create index on public.comments (post_id, created_at desc);
++create index on public.follows (following_id, status);
++create index on public.post_shares (receiver_id, created_at desc);
++create index profiles_username_trgm  on public.profiles using gin ((username::text) gin_trgm_ops);
++create index profiles_fullname_trgm  on public.profiles using gin (full_name gin_trgm_ops);
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000002_triggers.sql b/vxgram/backend/supabase/migrations/20260101000002_triggers.sql
+--- a/vxgram/backend/supabase/migrations/20260101000002_triggers.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000002_triggers.sql	2026-10-12 09:43:44.345798081 +0000
+@@ -0,0 +1,95 @@
++-- Profile auto-creation on signup
++create or replace function public.handle_new_user() returns trigger
++language plpgsql security definer set search_path = '' as $$
++declare uname text;
++begin
++  uname := lower(coalesce(new.raw_user_meta_data->>'username', split_part(new.email,'@',1)));
++  uname := left(regexp_replace(uname,'[^a-z0-9._]','','g'), 24);
++  if char_length(uname) < 3 or exists (select 1 from public.profiles where username = uname) then
++    uname := coalesce(nullif(left(uname,18),''),'user') || substr(replace(new.id::text,'-',''),1,6);
++  end if;
++  insert into public.profiles(id, username, full_name)
++  values (new.id, uname, new.raw_user_meta_data->>'full_name');
++  return new;
++end $$;
++create trigger on_auth_user_created after insert on auth.users
++  for each row execute function public.handle_new_user();
++
++-- Denormalized counters (clients cannot write them: see column grants in RLS file)
++create or replace function public.trg_posts_count() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' then update public.profiles set posts_count = posts_count + 1 where id = new.user_id;
++  else update public.profiles set posts_count = greatest(posts_count - 1, 0) where id = old.user_id; end if;
++  return null;
++end $$;
++create trigger posts_count after insert or delete on public.posts
++  for each row execute function public.trg_posts_count();
++
++create or replace function public.trg_media_count() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' then
++    if (select media_count from public.posts where id = new.post_id) >= 10 then
++      raise exception 'A post can have at most 10 media items';
++    end if;
++    update public.posts set media_count = media_count + 1 where id = new.post_id;
++    return new; -- BEFORE INSERT: returning NULL would silently cancel the insert
++  else
++    update public.posts set media_count = greatest(media_count - 1, 0) where id = old.post_id;
++    return old;
++  end if;
++end $$;
++create trigger media_count before insert on public.post_media
++  for each row execute function public.trg_media_count();
++create trigger media_count_del after delete on public.post_media
++  for each row execute function public.trg_media_count();
++
++create or replace function public.trg_likes_count() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' then update public.posts set likes_count = likes_count + 1 where id = new.post_id;
++  else update public.posts set likes_count = greatest(likes_count - 1, 0) where id = old.post_id; end if;
++  return null;
++end $$;
++create trigger likes_count after insert or delete on public.likes
++  for each row execute function public.trg_likes_count();
++
++create or replace function public.trg_comments_count() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' then update public.posts set comments_count = comments_count + 1 where id = new.post_id;
++  else update public.posts set comments_count = greatest(comments_count - 1, 0) where id = old.post_id; end if;
++  return null;
++end $$;
++create trigger comments_count after insert or delete on public.comments
++  for each row execute function public.trg_comments_count();
++
++-- Follow counters count ACCEPTED follows only
++create or replace function public.trg_follows_count() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if (tg_op = 'INSERT' and new.status = 'accepted')
++     or (tg_op = 'UPDATE' and old.status = 'pending' and new.status = 'accepted') then
++    update public.profiles set followers_count = followers_count + 1 where id = new.following_id;
++    update public.profiles set following_count = following_count + 1 where id = new.follower_id;
++  elsif tg_op = 'DELETE' and old.status = 'accepted' then
++    update public.profiles set followers_count = greatest(followers_count - 1, 0) where id = old.following_id;
++    update public.profiles set following_count = greatest(following_count - 1, 0) where id = old.follower_id;
++  end if;
++  return null;
++end $$;
++create trigger follows_count after insert or update or delete on public.follows
++  for each row execute function public.trg_follows_count();
++
++-- Private -> public: approve all pending requests
++create or replace function public.trg_profile_public() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if old.is_private and not new.is_private then
++    update public.follows set status = 'accepted' where following_id = new.id and status = 'pending';
++  end if;
++  return null;
++end $$;
++create trigger profile_public after update of is_private on public.profiles
++  for each row execute function public.trg_profile_public();
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000003_rls.sql b/vxgram/backend/supabase/migrations/20260101000003_rls.sql
+--- a/vxgram/backend/supabase/migrations/20260101000003_rls.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000003_rls.sql	2026-10-12 09:43:44.345808704 +0000
+@@ -0,0 +1,60 @@
++-- Visibility helpers (security definer => no RLS recursion)
++create or replace function public.can_view_user(target uuid) returns boolean
++language sql stable security definer set search_path = '' as $$
++  select auth.uid() = target
++      or exists (select 1 from public.profiles p where p.id = target and not p.is_private)
++      or exists (select 1 from public.follows f
++                 where f.follower_id = auth.uid() and f.following_id = target and f.status = 'accepted');
++$$;
++create or replace function public.can_view_post(pid uuid) returns boolean
++language sql stable security definer set search_path = '' as $$
++  select public.can_view_user((select user_id from public.posts where id = pid));
++$$;
++
++alter table public.profiles    enable row level security;
++alter table public.posts       enable row level security;
++alter table public.post_media  enable row level security;
++alter table public.likes       enable row level security;
++alter table public.comments    enable row level security;
++alter table public.follows     enable row level security;
++alter table public.post_shares enable row level security;
++
++-- Column-level grants: counters can never be set by clients
++revoke insert, update, delete on public.profiles from anon, authenticated;
++grant  update (username, full_name, bio, avatar_url, avatar_path, is_private) on public.profiles to authenticated;
++revoke update on public.posts from anon, authenticated;
++grant  update (caption) on public.posts to authenticated;
++revoke update on public.post_shares from anon, authenticated;
++grant  update (seen) on public.post_shares to authenticated;
++
++create policy profiles_read   on public.profiles for select using (true);
++create policy profiles_update on public.profiles for update using (id = auth.uid()) with check (id = auth.uid());
++
++create policy posts_read   on public.posts for select using (public.can_view_user(user_id));
++create policy posts_insert on public.posts for insert with check (user_id = auth.uid());
++create policy posts_update on public.posts for update using (user_id = auth.uid());
++create policy posts_delete on public.posts for delete using (user_id = auth.uid());
++
++create policy media_read   on public.post_media for select using (public.can_view_user(user_id));
++create policy media_insert on public.post_media for insert with check (
++  user_id = auth.uid() and exists (select 1 from public.posts p where p.id = post_id and p.user_id = auth.uid()));
++create policy media_delete on public.post_media for delete using (user_id = auth.uid());
++
++create policy likes_read   on public.likes for select using (public.can_view_post(post_id));
++create policy likes_insert on public.likes for insert with check (user_id = auth.uid() and public.can_view_post(post_id));
++create policy likes_delete on public.likes for delete using (user_id = auth.uid());
++
++create policy comments_read   on public.comments for select using (public.can_view_post(post_id));
++create policy comments_insert on public.comments for insert with check (user_id = auth.uid() and public.can_view_post(post_id));
++create policy comments_delete on public.comments for delete using (
++  user_id = auth.uid() or exists (select 1 from public.posts p where p.id = post_id and p.user_id = auth.uid()));
++
++-- follows: writes only through RPCs (security definer); unfollow/cancel allowed directly
++create policy follows_read on public.follows for select using (
++  follower_id = auth.uid() or following_id = auth.uid() or (status = 'accepted' and public.can_view_user(following_id)));
++create policy follows_delete on public.follows for delete using (follower_id = auth.uid() or following_id = auth.uid());
++
++create policy shares_read   on public.post_shares for select using (sender_id = auth.uid() or receiver_id = auth.uid());
++create policy shares_insert on public.post_shares for insert with check (sender_id = auth.uid() and public.can_view_post(post_id));
++create policy shares_update on public.post_shares for update using (receiver_id = auth.uid());
++create policy shares_delete on public.post_shares for delete using (sender_id = auth.uid() or receiver_id = auth.uid());
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000004_rpc.sql b/vxgram/backend/supabase/migrations/20260101000004_rpc.sql
+--- a/vxgram/backend/supabase/migrations/20260101000004_rpc.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000004_rpc.sql	2026-10-12 09:43:44.345818412 +0000
+@@ -0,0 +1,177 @@
++-- ===== Reads (security invoker => RLS enforced) =====
++
++-- scope: 'feed' (me + accepted followings) | 'profile' (p_author) | 'explore' (public accounts, not me)
++create or replace function public.get_posts(
++  p_scope text, p_author uuid default null, p_limit int default 20, p_before timestamptz default null)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, caption text, created_at timestamptz,
++               likes_count int, comments_count int, liked_by_me boolean, media jsonb)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.user_id, pr.username, pr.avatar_url, p.caption, p.created_at, p.likes_count, p.comments_count,
++    exists (select 1 from public.likes l where l.post_id = p.id and l.user_id = auth.uid()),
++    coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'url', m.url, 'type', m.media_type,
++                'position', m.position, 'width', m.width, 'height', m.height) order by m.position)
++              from public.post_media m where m.post_id = p.id), '[]'::jsonb)
++  from public.posts p join public.profiles pr on pr.id = p.user_id
++  where (p_before is null or p.created_at < p_before)
++    and case p_scope
++      when 'feed' then p.user_id = auth.uid() or exists (
++        select 1 from public.follows f where f.follower_id = auth.uid() and f.following_id = p.user_id and f.status = 'accepted')
++      when 'profile' then p.user_id = p_author
++      when 'explore' then not pr.is_private and p.user_id <> auth.uid()
++      else false end
++  order by p.created_at desc
++  limit least(p_limit, 50);
++$$;
++
++create or replace function public.get_profile(p_user uuid)
++returns table (id uuid, username citext, full_name text, bio text, avatar_url text, is_private boolean,
++               posts_count int, followers_count int, following_count int,
++               is_me boolean, follow_status text, follows_me boolean, can_view boolean)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.username, p.full_name, p.bio, p.avatar_url, p.is_private,
++         p.posts_count, p.followers_count, p.following_count,
++         p.id = auth.uid(),
++         (select f.status::text from public.follows f where f.follower_id = auth.uid() and f.following_id = p.id),
++         exists (select 1 from public.follows f where f.follower_id = p.id and f.following_id = auth.uid() and f.status = 'accepted'),
++         public.can_view_user(p.id)
++  from public.profiles p where p.id = p_user;
++$$;
++
++create or replace function public.search_users(q text, p_limit int default 20)
++returns table (id uuid, username citext, full_name text, avatar_url text, is_private boolean)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.username, p.full_name, p.avatar_url, p.is_private
++  from public.profiles p
++  where length(trim(q)) > 0
++    and (p.username::text ilike '%' || trim(q) || '%' or p.full_name ilike '%' || trim(q) || '%')
++  order by (p.username::text ilike trim(q) || '%') desc, p.followers_count desc
++  limit least(p_limit, 50);
++$$;
++
++create or replace function public.list_followers(p_user uuid, p_limit int default 50, p_offset int default 0)
++returns table (id uuid, username citext, full_name text, avatar_url text, i_follow text)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.username, p.full_name, p.avatar_url,
++    (select f2.status::text from public.follows f2 where f2.follower_id = auth.uid() and f2.following_id = p.id)
++  from public.follows f join public.profiles p on p.id = f.follower_id
++  where f.following_id = p_user and f.status = 'accepted' and public.can_view_user(p_user)
++  order by f.created_at desc limit least(p_limit, 100) offset p_offset;
++$$;
++
++create or replace function public.list_following(p_user uuid, p_limit int default 50, p_offset int default 0)
++returns table (id uuid, username citext, full_name text, avatar_url text, i_follow text)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.username, p.full_name, p.avatar_url,
++    (select f2.status::text from public.follows f2 where f2.follower_id = auth.uid() and f2.following_id = p.id)
++  from public.follows f join public.profiles p on p.id = f.following_id
++  where f.follower_id = p_user and f.status = 'accepted' and public.can_view_user(p_user)
++  order by f.created_at desc limit least(p_limit, 100) offset p_offset;
++$$;
++
++create or replace function public.follow_requests()
++returns table (id uuid, username citext, full_name text, avatar_url text, requested_at timestamptz)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.username, p.full_name, p.avatar_url, f.created_at
++  from public.follows f join public.profiles p on p.id = f.follower_id
++  where f.following_id = auth.uid() and f.status = 'pending' order by f.created_at desc;
++$$;
++
++create or replace function public.get_comments(p_post uuid, p_limit int default 30, p_before timestamptz default null)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, body text, created_at timestamptz)
++language sql stable security invoker set search_path = '' as $$
++  select c.id, c.user_id, p.username, p.avatar_url, c.body, c.created_at
++  from public.comments c join public.profiles p on p.id = c.user_id
++  where c.post_id = p_post and (p_before is null or c.created_at < p_before)
++  order by c.created_at desc limit least(p_limit, 100);
++$$;
++
++create or replace function public.get_inbox(p_limit int default 30)
++returns table (id uuid, post_id uuid, sender_id uuid, sender_username citext, sender_avatar text,
++               message text, seen boolean, created_at timestamptz, thumb_url text)
++language sql stable security invoker set search_path = '' as $$
++  select s.id, s.post_id, s.sender_id, p.username, p.avatar_url, s.message, s.seen, s.created_at,
++    (select m.url from public.post_media m where m.post_id = s.post_id order by m.position limit 1)
++  from public.post_shares s join public.profiles p on p.id = s.sender_id
++  where s.receiver_id = auth.uid() order by s.created_at desc limit least(p_limit, 100);
++$$;
++
++-- ===== Writes =====
++
++create or replace function public.toggle_like(p_post uuid) returns boolean
++language plpgsql security invoker set search_path = '' as $$
++declare n int;
++begin
++  delete from public.likes where post_id = p_post and user_id = auth.uid();
++  get diagnostics n = row_count;
++  if n > 0 then return false; end if;
++  insert into public.likes(post_id, user_id) values (p_post, auth.uid());
++  return true;
++end $$;
++
++-- returns storage paths so the client can remove the files from the bucket
++create or replace function public.delete_post(p_post uuid) returns text[]
++language plpgsql security invoker set search_path = '' as $$
++declare paths text[];
++begin
++  select array_agg(storage_path) into paths from public.post_media where post_id = p_post and user_id = auth.uid();
++  delete from public.posts where id = p_post and user_id = auth.uid();
++  return coalesce(paths, '{}');
++end $$;
++
++create or replace function public.share_post(p_post uuid, p_receivers uuid[], p_message text default null) returns int
++language plpgsql security invoker set search_path = '' as $$
++declare n int;
++begin
++  insert into public.post_shares(post_id, sender_id, receiver_id, message)
++  select p_post, auth.uid(), r, p_message from unnest(p_receivers) r where r <> auth.uid();
++  get diagnostics n = row_count;
++  return n;
++end $$;
++
++-- follow: private account => 'pending', else 'accepted'
++create or replace function public.follow_user(target uuid) returns text
++language plpgsql security definer set search_path = '' as $$
++declare priv boolean; st public.follow_status;
++begin
++  if auth.uid() is null then raise exception 'Not authenticated'; end if;
++  if target = auth.uid() then raise exception 'You cannot follow yourself'; end if;
++  select is_private into priv from public.profiles where id = target;
++  if not found then raise exception 'User not found'; end if;
++  st := (case when priv then 'pending' else 'accepted' end)::public.follow_status;
++  insert into public.follows(follower_id, following_id, status) values (auth.uid(), target, st)
++    on conflict do nothing;
++  return (select status::text from public.follows where follower_id = auth.uid() and following_id = target);
++end $$;
++
++create or replace function public.unfollow_user(target uuid) returns void
++language sql security invoker set search_path = '' as $$
++  delete from public.follows where follower_id = auth.uid() and following_id = target;
++$$;
++
++create or replace function public.respond_follow_request(p_follower uuid, p_accept boolean) returns void
++language plpgsql security definer set search_path = '' as $$
++begin
++  if p_accept then
++    update public.follows set status = 'accepted'
++      where follower_id = p_follower and following_id = auth.uid() and status = 'pending';
++  else
++    delete from public.follows where follower_id = p_follower and following_id = auth.uid() and status = 'pending';
++  end if;
++end $$;
++
++-- Remove one of my followers
++create or replace function public.remove_follower(p_follower uuid) returns void
++language sql security invoker set search_path = '' as $$
++  delete from public.follows where follower_id = p_follower and following_id = auth.uid();
++$$;
++
++-- Account deletion (client must delete its storage files first)
++create or replace function public.delete_account() returns void
++language plpgsql security definer set search_path = '' as $$
++begin
++  if auth.uid() is null then raise exception 'Not authenticated'; end if;
++  delete from auth.users where id = auth.uid();
++end $$;
++
++revoke execute on function public.follow_user(uuid), public.respond_follow_request(uuid, boolean), public.delete_account() from public, anon;
++grant  execute on function public.follow_user(uuid), public.respond_follow_request(uuid, boolean), public.delete_account() to authenticated;
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000005_storage_realtime.sql b/vxgram/backend/supabase/migrations/20260101000005_storage_realtime.sql
+--- a/vxgram/backend/supabase/migrations/20260101000005_storage_realtime.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000005_storage_realtime.sql	2026-10-12 09:43:44.345830994 +0000
+@@ -0,0 +1,16 @@
++-- Buckets: avatars/{uid}/..., posts/{uid}/{postId}/{n}.ext
++insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
++  ('avatars', 'avatars', true, 5242880,   array['image/jpeg','image/png','image/webp']),
++  ('posts',   'posts',   true, 104857600, array['image/jpeg','image/png','image/webp','video/mp4','video/quicktime','video/webm'])
++on conflict (id) do nothing;
++
++create policy "public read media" on storage.objects for select using (bucket_id in ('avatars','posts'));
++create policy "upload own media" on storage.objects for insert to authenticated
++  with check (bucket_id in ('avatars','posts') and (storage.foldername(name))[1] = auth.uid()::text);
++create policy "update own media" on storage.objects for update to authenticated
++  using (bucket_id in ('avatars','posts') and (storage.foldername(name))[1] = auth.uid()::text);
++create policy "delete own media" on storage.objects for delete to authenticated
++  using (bucket_id in ('avatars','posts') and (storage.foldername(name))[1] = auth.uid()::text);
++
++-- Realtime (comments, inbox, follow requests, profile counters)
++alter publication supabase_realtime add table public.comments, public.post_shares, public.follows, public.profiles;
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000006_get_post.sql b/vxgram/backend/supabase/migrations/20260101000006_get_post.sql
+--- a/vxgram/backend/supabase/migrations/20260101000006_get_post.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000006_get_post.sql	2026-10-12 09:43:44.345839854 +0000
+@@ -0,0 +1,13 @@
++-- Single post (used when opening a shared post from the inbox). Same shape as get_posts; RLS decides visibility.
++create or replace function public.get_post(p_post uuid)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, caption text, created_at timestamptz,
++               likes_count int, comments_count int, liked_by_me boolean, media jsonb)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.user_id, pr.username, pr.avatar_url, p.caption, p.created_at, p.likes_count, p.comments_count,
++    exists (select 1 from public.likes l where l.post_id = p.id and l.user_id = auth.uid()),
++    coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'url', m.url, 'type', m.media_type,
++                'position', m.position, 'width', m.width, 'height', m.height) order by m.position)
++              from public.post_media m where m.post_id = p.id), '[]'::jsonb)
++  from public.posts p join public.profiles pr on pr.id = p.user_id
++  where p.id = p_post;
++$$;
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000007_saved_posts.sql b/vxgram/backend/supabase/migrations/20260101000007_saved_posts.sql
+--- a/vxgram/backend/supabase/migrations/20260101000007_saved_posts.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000007_saved_posts.sql	2026-10-12 09:43:44.345848302 +0000
+@@ -0,0 +1,42 @@
++-- Saved posts (bookmarks): private to each user
++create table public.saved_posts (
++  user_id uuid not null references public.profiles(id) on delete cascade,
++  post_id uuid not null references public.posts(id) on delete cascade,
++  created_at timestamptz not null default now(),
++  primary key (user_id, post_id)
++);
++create index on public.saved_posts (user_id, created_at desc);
++
++alter table public.saved_posts enable row level security;
++create policy saved_read   on public.saved_posts for select using (user_id = auth.uid());
++create policy saved_insert on public.saved_posts for insert with check (user_id = auth.uid() and public.can_view_post(post_id));
++create policy saved_delete on public.saved_posts for delete using (user_id = auth.uid());
++
++-- true = now saved, false = removed
++create or replace function public.toggle_save(p_post uuid) returns boolean
++language plpgsql security invoker set search_path = '' as $$
++declare n int;
++begin
++  delete from public.saved_posts where post_id = p_post and user_id = auth.uid();
++  get diagnostics n = row_count;
++  if n > 0 then return false; end if;
++  insert into public.saved_posts(user_id, post_id) values (auth.uid(), p_post);
++  return true;
++end $$;
++
++-- Same shape as get_posts; ordered/paged by post date. RLS hides posts that became invisible (e.g. author went private).
++create or replace function public.get_saved_posts(p_limit int default 15, p_before timestamptz default null)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, caption text, created_at timestamptz,
++               likes_count int, comments_count int, liked_by_me boolean, media jsonb)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.user_id, pr.username, pr.avatar_url, p.caption, p.created_at, p.likes_count, p.comments_count,
++    exists (select 1 from public.likes l where l.post_id = p.id and l.user_id = auth.uid()),
++    coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'url', m.url, 'type', m.media_type,
++                'position', m.position, 'width', m.width, 'height', m.height) order by m.position)
++              from public.post_media m where m.post_id = p.id), '[]'::jsonb)
++  from public.posts p join public.profiles pr on pr.id = p.user_id
++  where exists (select 1 from public.saved_posts s where s.post_id = p.id and s.user_id = auth.uid())
++    and (p_before is null or p.created_at < p_before)
++  order by p.created_at desc
++  limit least(p_limit, 50);
++$$;
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000008_fix_media_trigger.sql b/vxgram/backend/supabase/migrations/20260101000008_fix_media_trigger.sql
+--- a/vxgram/backend/supabase/migrations/20260101000008_fix_media_trigger.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000008_fix_media_trigger.sql	2026-10-12 09:43:44.345862530 +0000
+@@ -0,0 +1,21 @@
++-- BUG FIX: trg_media_count ran BEFORE INSERT and returned NULL, which silently cancelled every post_media insert
++-- (files were uploaded but no media rows existed, so posts showed no pictures).
++create or replace function public.trg_media_count() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' then
++    if (select media_count from public.posts where id = new.post_id) >= 10 then
++      raise exception 'A post can have at most 10 media items';
++    end if;
++    update public.posts set media_count = media_count + 1 where id = new.post_id;
++    return new;
++  else
++    update public.posts set media_count = greatest(media_count - 1, 0) where id = old.post_id;
++    return old;
++  end if;
++end $$;
++
++-- Clean up the broken posts created while the bug existed (posts that have no media rows).
++-- Their uploaded files stay in the 'posts' bucket; delete them in Dashboard -> Storage -> posts if you like.
++delete from public.posts p
++where not exists (select 1 from public.post_media m where m.post_id = p.id);
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000009_thumbnails.sql b/vxgram/backend/supabase/migrations/20260101000009_thumbnails.sql
+--- a/vxgram/backend/supabase/migrations/20260101000009_thumbnails.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000009_thumbnails.sql	2026-10-12 09:43:44.345871098 +0000
+@@ -0,0 +1,80 @@
++-- Thumbnails: every media item can have a small JPEG (grids load it instead of the full file / video).
++alter table public.post_media add column if not exists thumb_url  text;
++alter table public.post_media add column if not exists thumb_path text;
++
++-- get_posts / get_post / get_saved_posts now also return thumb_url inside each media object
++create or replace function public.get_posts(
++  p_scope text, p_author uuid default null, p_limit int default 20, p_before timestamptz default null)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, caption text, created_at timestamptz,
++               likes_count int, comments_count int, liked_by_me boolean, media jsonb)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.user_id, pr.username, pr.avatar_url, p.caption, p.created_at, p.likes_count, p.comments_count,
++    exists (select 1 from public.likes l where l.post_id = p.id and l.user_id = auth.uid()),
++    coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'url', m.url, 'thumb_url', m.thumb_url, 'type', m.media_type,
++                'position', m.position, 'width', m.width, 'height', m.height) order by m.position)
++              from public.post_media m where m.post_id = p.id), '[]'::jsonb)
++  from public.posts p join public.profiles pr on pr.id = p.user_id
++  where (p_before is null or p.created_at < p_before)
++    and case p_scope
++      when 'feed' then p.user_id = auth.uid() or exists (
++        select 1 from public.follows f where f.follower_id = auth.uid() and f.following_id = p.user_id and f.status = 'accepted')
++      when 'profile' then p.user_id = p_author
++      when 'explore' then not pr.is_private and p.user_id <> auth.uid()
++      else false end
++  order by p.created_at desc
++  limit least(p_limit, 50);
++$$;
++
++create or replace function public.get_post(p_post uuid)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, caption text, created_at timestamptz,
++               likes_count int, comments_count int, liked_by_me boolean, media jsonb)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.user_id, pr.username, pr.avatar_url, p.caption, p.created_at, p.likes_count, p.comments_count,
++    exists (select 1 from public.likes l where l.post_id = p.id and l.user_id = auth.uid()),
++    coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'url', m.url, 'thumb_url', m.thumb_url, 'type', m.media_type,
++                'position', m.position, 'width', m.width, 'height', m.height) order by m.position)
++              from public.post_media m where m.post_id = p.id), '[]'::jsonb)
++  from public.posts p join public.profiles pr on pr.id = p.user_id
++  where p.id = p_post;
++$$;
++
++create or replace function public.get_saved_posts(p_limit int default 15, p_before timestamptz default null)
++returns table (id uuid, user_id uuid, username citext, avatar_url text, caption text, created_at timestamptz,
++               likes_count int, comments_count int, liked_by_me boolean, media jsonb)
++language sql stable security invoker set search_path = '' as $$
++  select p.id, p.user_id, pr.username, pr.avatar_url, p.caption, p.created_at, p.likes_count, p.comments_count,
++    exists (select 1 from public.likes l where l.post_id = p.id and l.user_id = auth.uid()),
++    coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'url', m.url, 'thumb_url', m.thumb_url, 'type', m.media_type,
++                'position', m.position, 'width', m.width, 'height', m.height) order by m.position)
++              from public.post_media m where m.post_id = p.id), '[]'::jsonb)
++  from public.posts p join public.profiles pr on pr.id = p.user_id
++  where exists (select 1 from public.saved_posts s where s.post_id = p.id and s.user_id = auth.uid())
++    and (p_before is null or p.created_at < p_before)
++  order by p.created_at desc
++  limit least(p_limit, 50);
++$$;
++
++-- inbox preview: use the thumbnail when there is one (a video url cannot be shown as an image)
++create or replace function public.get_inbox(p_limit int default 30)
++returns table (id uuid, post_id uuid, sender_id uuid, sender_username citext, sender_avatar text,
++               message text, seen boolean, created_at timestamptz, thumb_url text)
++language sql stable security invoker set search_path = '' as $$
++  select s.id, s.post_id, s.sender_id, p.username, p.avatar_url, s.message, s.seen, s.created_at,
++    (select coalesce(m.thumb_url, m.url) from public.post_media m where m.post_id = s.post_id order by m.position limit 1)
++  from public.post_shares s join public.profiles p on p.id = s.sender_id
++  where s.receiver_id = auth.uid() order by s.created_at desc limit least(p_limit, 100);
++$$;
++
++-- deleting a post must also return the thumbnail files so the app can remove them from storage
++create or replace function public.delete_post(p_post uuid) returns text[]
++language plpgsql security invoker set search_path = '' as $$
++declare paths text[];
++begin
++  select array_agg(x) into paths from (
++    select storage_path as x from public.post_media where post_id = p_post and user_id = auth.uid()
++    union all
++    select thumb_path from public.post_media where post_id = p_post and user_id = auth.uid() and thumb_path is not null
++  ) t;
++  delete from public.posts where id = p_post and user_id = auth.uid();
++  return coalesce(paths, '{}');
++end $$;
+diff -ruN -x .git a/vxgram/backend/supabase/migrations/20260101000010_notifications.sql b/vxgram/backend/supabase/migrations/20260101000010_notifications.sql
+--- a/vxgram/backend/supabase/migrations/20260101000010_notifications.sql	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/backend/supabase/migrations/20260101000010_notifications.sql	2026-10-12 09:43:44.345881532 +0000
+@@ -0,0 +1,97 @@
++-- In-app notifications: likes, comments, follows, follow requests, accepted requests.
++-- Rows are created ONLY by triggers (clients cannot insert); a user can read/mark-read/delete their own.
++create table public.notifications (
++  id uuid primary key default gen_random_uuid(),
++  user_id  uuid not null references public.profiles(id) on delete cascade,   -- recipient
++  actor_id uuid not null references public.profiles(id) on delete cascade,   -- who did it
++  type text not null check (type in ('like','comment','follow','follow_request','follow_accepted')),
++  post_id uuid references public.posts(id) on delete cascade,
++  body text,
++  read_at timestamptz,
++  created_at timestamptz not null default now(),
++  check (user_id <> actor_id)
++);
++create index on public.notifications (user_id, created_at desc);
++create index on public.notifications (user_id) where read_at is null;
++-- like/unlike/like again must not spam: one row per (recipient, actor, post) / (recipient, actor, type)
++create unique index notif_like_uq   on public.notifications (user_id, actor_id, post_id) where type = 'like';
++create unique index notif_follow_uq on public.notifications (user_id, actor_id, type) where type in ('follow','follow_request','follow_accepted');
++
++alter table public.notifications enable row level security;
++create policy notif_read   on public.notifications for select using (user_id = auth.uid());
++create policy notif_update on public.notifications for update using (user_id = auth.uid());
++create policy notif_delete on public.notifications for delete using (user_id = auth.uid());
++revoke update on public.notifications from anon, authenticated;
++grant  update (read_at) on public.notifications to authenticated;
++
++-- ---- triggers (AFTER, security definer) ----
++create or replace function public.trg_notify_like() returns trigger
++language plpgsql security definer set search_path = '' as $$
++declare owner uuid;
++begin
++  if tg_op = 'INSERT' then
++    select user_id into owner from public.posts where id = new.post_id;
++    if owner is not null and owner <> new.user_id then
++      insert into public.notifications(user_id, actor_id, type, post_id) values (owner, new.user_id, 'like', new.post_id) on conflict do nothing;
++    end if;
++  else
++    delete from public.notifications where actor_id = old.user_id and post_id = old.post_id and type = 'like';
++  end if;
++  return null;
++end $$;
++create trigger notify_like after insert or delete on public.likes for each row execute function public.trg_notify_like();
++
++create or replace function public.trg_notify_comment() returns trigger
++language plpgsql security definer set search_path = '' as $$
++declare owner uuid;
++begin
++  select user_id into owner from public.posts where id = new.post_id;
++  if owner is not null and owner <> new.user_id then
++    insert into public.notifications(user_id, actor_id, type, post_id, body) values (owner, new.user_id, 'comment', new.post_id, left(new.body, 100));
++  end if;
++  return null;
++end $$;
++create trigger notify_comment after insert on public.comments for each row execute function public.trg_notify_comment();
++
++create or replace function public.trg_notify_follow() returns trigger
++language plpgsql security definer set search_path = '' as $$
++begin
++  if tg_op = 'INSERT' then
++    insert into public.notifications(user_id, actor_id, type)
++    values (new.following_id, new.follower_id, case when new.status = 'accepted' then 'follow' else 'follow_request' end) on conflict do nothing;
++  elsif tg_op = 'UPDATE' then
++    if old.status = 'pending' and new.status = 'accepted' then
++      delete from public.notifications where user_id = new.following_id and actor_id = new.follower_id and type = 'follow_request';
++      insert into public.notifications(user_id, actor_id, type) values (new.following_id, new.follower_id, 'follow') on conflict do nothing;
++      insert into public.notifications(user_id, actor_id, type) values (new.follower_id, new.following_id, 'follow_accepted') on conflict do nothing;
++    end if;
++  else
++    delete from public.notifications where actor_id = old.follower_id and user_id = old.following_id and type in ('follow','follow_request');
++  end if;
++  return null;
++end $$;
++create trigger notify_follow after insert or update or delete on public.follows for each row execute function public.trg_notify_follow();
++
++-- ---- API ----
++create or replace function public.get_notifications(p_limit int default 30, p_before timestamptz default null)
++returns table (id uuid, type text, actor_id uuid, actor_username citext, actor_avatar text, post_id uuid,
++               thumb_url text, body text, is_read boolean, created_at timestamptz)
++language sql stable security invoker set search_path = '' as $$
++  select n.id, n.type, n.actor_id, a.username, a.avatar_url, n.post_id,
++    (select coalesce(m.thumb_url, m.url) from public.post_media m where m.post_id = n.post_id order by m.position limit 1),
++    n.body, n.read_at is not null, n.created_at
++  from public.notifications n join public.profiles a on a.id = n.actor_id
++  where n.user_id = auth.uid() and (p_before is null or n.created_at < p_before)
++  order by n.created_at desc
++  limit least(p_limit, 100);
++$$;
++
++create or replace function public.unread_notification_count() returns int
++language sql stable security invoker set search_path = '' as $$
++  select count(*)::int from public.notifications where user_id = auth.uid() and read_at is null;
++$$;
++
++create or replace function public.mark_notifications_read() returns void
++language sql security invoker set search_path = '' as $$
++  update public.notifications set read_at = now() where user_id = auth.uid() and read_at is null;
++$$;
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/app.dart b/vxgram/frontend/vxgram/lib/app.dart
+--- a/vxgram/frontend/vxgram/lib/app.dart	2026-10-12 09:43:44.339274370 +0000
++++ b/vxgram/frontend/vxgram/lib/app.dart	2026-10-12 09:43:44.343693747 +0000
+@@ -7,6 +7,7 @@
+ import 'features/auth/bloc/auth_bloc.dart';
+ import 'features/auth/ui/auth_pages.dart';
+ import 'features/onboarding/onboarding_page.dart';
++import 'features/notifications/bloc/unread_cubit.dart';
+ import 'features/saved/bloc/saved_cubit.dart';
+ import 'features/settings/settings_cubit.dart';
+ import 'features/settings/settings_pages.dart';
+@@ -35,7 +36,8 @@
+           listener: (ctx, a) {
+             navigatorKey.currentState?.popUntil((r) => r.isFirst);
+             final saved = ctx.read<SavedCubit>();
+-            a.status == AuthStatus.authenticated ? saved.load() : saved.clear();
++            final unread = ctx.read<UnreadCubit>();
++            if (a.status == AuthStatus.authenticated) { saved.load(); unread.start(); } else { saved.clear(); unread.stop(); }
+           },
+           child: BlocBuilder<AuthBloc, AuthState>(
+             buildWhen: (p, c) => p.status != c.status,
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/core/l10n/app_strings.dart b/vxgram/frontend/vxgram/lib/core/l10n/app_strings.dart
+--- a/vxgram/frontend/vxgram/lib/core/l10n/app_strings.dart	2026-10-12 09:43:44.339328618 +0000
++++ b/vxgram/frontend/vxgram/lib/core/l10n/app_strings.dart	2026-10-12 09:43:44.343749025 +0000
+@@ -68,6 +68,9 @@
+       'onb1_title': 'Share moments', 'onb1_body': 'Post photos and videos for the people who matter to you.',
+       'onb2_title': 'Follow people you love', 'onb2_body': 'See what your friends and favourite creators are up to.',
+       'onb3_title': 'Explore the world', 'onb3_body': 'Discover new accounts and ideas every day.',
++      'notifications': 'Notifications', 'no_notifications': 'No notifications yet', 'notif_like': '{u} liked your post',
++      'notif_comment': '{u} commented: {c}', 'notif_follow': '{u} started following you', 'notif_follow_request': '{u} requested to follow you',
++      'notif_follow_accepted': '{u} accepted your follow request',
+     },
+     'fa': {
+       'welcome': 'دوباره خوش آمدید', 'login': 'ورود', 'signup': 'ثبت‌نام', 'email': 'ایمیل', 'password': 'رمز عبور',
+@@ -104,6 +107,9 @@
+       'onb1_title': 'لحظه‌هایت را به اشتراک بگذار', 'onb1_body': 'عکس و ویدیو را برای کسانی که برایت مهم‌اند منتشر کن.',
+       'onb2_title': 'کسانی را که دوست داری دنبال کن', 'onb2_body': 'ببین دوستان و سازندگان مورد علاقه‌ات چه می‌کنند.',
+       'onb3_title': 'دنیا را کاوش کن', 'onb3_body': 'هر روز حساب‌ها و ایده‌های تازه کشف کن.',
++      'notifications': 'اعلان‌ها', 'no_notifications': 'هنوز اعلانی ندارید', 'notif_like': '{u} پست شما را پسندید',
++      'notif_comment': '{u} نظر داد: {c}', 'notif_follow': '{u} شما را دنبال کرد', 'notif_follow_request': '{u} درخواست دنبال کردن شما را داد',
++      'notif_follow_accepted': '{u} درخواست دنبال کردن شما را پذیرفت',
+     },
+   };
+ }
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/feed/ui/feed_page.dart b/vxgram/frontend/vxgram/lib/features/feed/ui/feed_page.dart
+--- a/vxgram/frontend/vxgram/lib/features/feed/ui/feed_page.dart	2026-10-12 09:43:44.340128937 +0000
++++ b/vxgram/frontend/vxgram/lib/features/feed/ui/feed_page.dart	2026-10-12 09:43:44.344450370 +0000
+@@ -6,6 +6,7 @@
+ import '../../../core/widgets/common.dart';
+ import '../bloc/feed_bloc.dart';
+ import '../domain/post_repository.dart';
++import '../../notifications/ui/notification_bell.dart';
+ import 'post_card.dart';
+ 
+ class FeedPage extends StatelessWidget {
+@@ -44,7 +45,7 @@
+   Widget build(BuildContext context) {
+     final c = VxColors.of(context);
+     return Scaffold(
+-      appBar: AppBar(title: const Logo(size: 24), centerTitle: false, bottom: PreferredSize(preferredSize: const Size.fromHeight(1), child: Divider(color: c.border))),
++      appBar: AppBar(title: const Logo(size: 24), centerTitle: false, actions: const [NotificationBell()], bottom: PreferredSize(preferredSize: const Size.fromHeight(1), child: Divider(color: c.border))),
+       body: BlocConsumer<FeedBloc, FeedState>(
+         listenWhen: (p, s) => s.error != null && p.error != s.error,
+         listener: (context, st) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(st.error!))),
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/bloc/notifications_cubit.dart b/vxgram/frontend/vxgram/lib/features/notifications/bloc/notifications_cubit.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/bloc/notifications_cubit.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/bloc/notifications_cubit.dart	2026-10-12 09:43:44.345177588 +0000
+@@ -0,0 +1,60 @@
++import 'package:equatable/equatable.dart';
++import 'package:flutter_bloc/flutter_bloc.dart';
++import '../../../core/failure.dart';
++import '../../profile/domain/profile_repository.dart';
++import '../domain/app_notification.dart';
++import '../domain/notification_repository.dart';
++
++enum NotificationsStatus { loading, success, failure }
++
++class NotificationsState extends Equatable {
++  const NotificationsState({this.items = const [], this.status = NotificationsStatus.loading, this.hasMore = false, this.loadingMore = false, this.error});
++  final List<AppNotification> items; final NotificationsStatus status; final bool hasMore, loadingMore; final String? error;
++  NotificationsState copyWith({List<AppNotification>? items, NotificationsStatus? status, bool? hasMore, bool? loadingMore, String? error, bool clearError = false}) =>
++      NotificationsState(items: items ?? this.items, status: status ?? this.status, hasMore: hasMore ?? this.hasMore,
++          loadingMore: loadingMore ?? this.loadingMore, error: clearError ? null : (error ?? this.error));
++  @override
++  List<Object?> get props => [items, status, hasMore, loadingMore, error];
++}
++
++class NotificationsCubit extends Cubit<NotificationsState> {
++  NotificationsCubit(this._repo, this._profiles, {this.onMarkedRead}) : super(const NotificationsState());
++  final NotificationRepository _repo; final ProfileRepository _profiles;
++  /// Called after everything was marked read on the server (clears the bell badge).
++  final void Function()? onMarkedRead;
++  static const _page = 30;
++
++  /// Loads the list, then marks everything read. Items keep their original read flag so new ones stay highlighted.
++  Future<void> load() async {
++    emit(const NotificationsState());
++    try {
++      final items = await _repo.list();
++      emit(NotificationsState(items: items, status: NotificationsStatus.success, hasMore: items.length == _page));
++      try { await _repo.markAllRead(); onMarkedRead?.call(); } on AppFailure catch (_) {}
++    } on AppFailure catch (f) {
++      emit(NotificationsState(status: NotificationsStatus.failure, error: f.message));
++    }
++  }
++
++  Future<void> loadMore() async {
++    if (!state.hasMore || state.loadingMore || state.items.isEmpty) return;
++    emit(state.copyWith(loadingMore: true));
++    try {
++      final more = await _repo.list(before: state.items.last.createdAt);
++      emit(state.copyWith(items: [...state.items, ...more], hasMore: more.length == _page, loadingMore: false));
++    } on AppFailure catch (f) {
++      emit(state.copyWith(loadingMore: false, error: f.message));
++    }
++  }
++
++  /// Confirm / delete a follow request straight from the list.
++  Future<void> respond(AppNotification n, {required bool accept}) async {
++    emit(state.copyWith(clearError: true));
++    try {
++      await _profiles.respondToRequest(n.actorId, accept: accept);
++      emit(state.copyWith(items: state.items.where((x) => x.id != n.id).toList()));
++    } on AppFailure catch (f) {
++      emit(state.copyWith(error: f.message));
++    }
++  }
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/bloc/unread_cubit.dart b/vxgram/frontend/vxgram/lib/features/notifications/bloc/unread_cubit.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/bloc/unread_cubit.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/bloc/unread_cubit.dart	2026-10-12 09:43:44.345186055 +0000
+@@ -0,0 +1,31 @@
++import 'dart:async';
++import 'package:flutter_bloc/flutter_bloc.dart';
++import '../../../core/failure.dart';
++import '../domain/notification_repository.dart';
++
++/// App-wide unread counter for the bell badge. Polls while signed in (simple and robust; no realtime socket needed).
++class UnreadCubit extends Cubit<int> {
++  UnreadCubit(this._repo, {this.interval = const Duration(seconds: 30)}) : super(0);
++  final NotificationRepository _repo; final Duration interval;
++  Timer? _timer;
++
++  void start() {
++    _timer?.cancel();
++    refresh();
++    _timer = Timer.periodic(interval, (_) => refresh());
++  }
++
++  void stop() { _timer?.cancel(); _timer = null; emit(0); } // on logout
++
++  Future<void> refresh() async {
++    try {
++      final n = await _repo.unreadCount();
++      if (!isClosed) emit(n);
++    } on AppFailure catch (_) {/* keep the old number */}
++  }
++
++  void clear() => emit(0);
++
++  @override
++  Future<void> close() { _timer?.cancel(); return super.close(); }
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source.dart b/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source.dart	2026-10-12 09:43:44.345220046 +0000
+@@ -0,0 +1,7 @@
++import '../models/notification_model.dart';
++
++abstract class NotificationRemoteDataSource {
++  Future<List<NotificationModel>> list(DateTime? before);
++  Future<int> unreadCount();
++  Future<void> markAllRead();
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source_impl.dart b/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source_impl.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source_impl.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/data/datasources/notification_remote_data_source_impl.dart	2026-10-12 09:43:44.345229403 +0000
+@@ -0,0 +1,21 @@
++import 'package:supabase_flutter/supabase_flutter.dart';
++import '../models/notification_model.dart';
++import 'notification_remote_data_source.dart';
++
++class NotificationRemoteDataSourceImpl implements NotificationRemoteDataSource {
++  NotificationRemoteDataSourceImpl(this._c);
++  final SupabaseClient _c;
++  static const page = 30;
++
++  @override
++  Future<List<NotificationModel>> list(DateTime? before) async {
++    final res = await _c.rpc('get_notifications', params: {'p_limit': page, 'p_before': before?.toUtc().toIso8601String()});
++    return (res as List).map((e) => NotificationModel.fromJson(Map<String, dynamic>.from(e))).toList();
++  }
++
++  @override
++  Future<int> unreadCount() async => (await _c.rpc('unread_notification_count')) as int;
++
++  @override
++  Future<void> markAllRead() async { await _c.rpc('mark_notifications_read'); }
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/data/models/notification_model.dart b/vxgram/frontend/vxgram/lib/features/notifications/data/models/notification_model.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/data/models/notification_model.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/data/models/notification_model.dart	2026-10-12 09:43:44.345249355 +0000
+@@ -0,0 +1,12 @@
++import '../../domain/app_notification.dart';
++
++class NotificationModel extends AppNotification {
++  const NotificationModel({required super.id, required super.type, required super.actorId, required super.actorUsername, super.actorAvatar,
++      super.postId, super.thumbUrl, super.body, required super.read, required super.createdAt});
++
++  /// Row of the `get_notifications` RPC.
++  factory NotificationModel.fromJson(Map<String, dynamic> j) => NotificationModel(
++      id: j['id'], type: NotificationType.parse(j['type'] as String?), actorId: j['actor_id'], actorUsername: j['actor_username'].toString(),
++      actorAvatar: j['actor_avatar'], postId: j['post_id'], thumbUrl: j['thumb_url'], body: j['body'],
++      read: j['is_read'] ?? false, createdAt: DateTime.parse(j['created_at']).toLocal());
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/data/repositories/notification_repository_impl.dart b/vxgram/frontend/vxgram/lib/features/notifications/data/repositories/notification_repository_impl.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/data/repositories/notification_repository_impl.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/data/repositories/notification_repository_impl.dart	2026-10-12 09:43:44.345268332 +0000
+@@ -0,0 +1,15 @@
++import '../../../../core/failure.dart';
++import '../../domain/app_notification.dart';
++import '../../domain/notification_repository.dart';
++import '../datasources/notification_remote_data_source.dart';
++
++class NotificationRepositoryImpl implements NotificationRepository {
++  NotificationRepositoryImpl(this._ds);
++  final NotificationRemoteDataSource _ds;
++  @override
++  Future<List<AppNotification>> list({DateTime? before}) => guard(() => _ds.list(before));
++  @override
++  Future<int> unreadCount() => guard(_ds.unreadCount);
++  @override
++  Future<void> markAllRead() => guard(_ds.markAllRead);
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/domain/app_notification.dart b/vxgram/frontend/vxgram/lib/features/notifications/domain/app_notification.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/domain/app_notification.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/domain/app_notification.dart	2026-10-12 09:43:44.345287989 +0000
+@@ -0,0 +1,25 @@
++import 'package:equatable/equatable.dart';
++
++enum NotificationType {
++  like, comment, follow, followRequest, followAccepted, other;
++
++  static NotificationType parse(String? s) {
++    switch (s) {
++      case 'like': return like;
++      case 'comment': return comment;
++      case 'follow': return follow;
++      case 'follow_request': return followRequest;
++      case 'follow_accepted': return followAccepted;
++      default: return other;
++    }
++  }
++}
++
++class AppNotification extends Equatable {
++  const AppNotification({required this.id, required this.type, required this.actorId, required this.actorUsername, this.actorAvatar,
++      this.postId, this.thumbUrl, this.body, required this.read, required this.createdAt});
++  final String id, actorId, actorUsername; final NotificationType type;
++  final String? actorAvatar, postId, thumbUrl, body; final bool read; final DateTime createdAt;
++  @override
++  List<Object?> get props => [id, read];
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/domain/notification_repository.dart b/vxgram/frontend/vxgram/lib/features/notifications/domain/notification_repository.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/domain/notification_repository.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/domain/notification_repository.dart	2026-10-12 09:43:44.345297622 +0000
+@@ -0,0 +1,8 @@
++import 'app_notification.dart';
++
++abstract class NotificationRepository {
++  /// Newest first. Pass the last item's createdAt as [before] to page.
++  Future<List<AppNotification>> list({DateTime? before});
++  Future<int> unreadCount();
++  Future<void> markAllRead();
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/ui/notification_bell.dart b/vxgram/frontend/vxgram/lib/features/notifications/ui/notification_bell.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/ui/notification_bell.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/ui/notification_bell.dart	2026-10-12 09:43:44.345318863 +0000
+@@ -0,0 +1,22 @@
++import 'package:flutter/material.dart';
++import 'package:flutter_bloc/flutter_bloc.dart';
++import '../../../core/l10n/app_strings.dart';
++import '../bloc/unread_cubit.dart';
++import 'notifications_page.dart';
++
++/// Heart icon with an unread badge (home app bar). Opens the notifications list.
++class NotificationBell extends StatelessWidget {
++  const NotificationBell({super.key});
++  @override
++  Widget build(BuildContext context) => BlocBuilder<UnreadCubit, int>(
++        builder: (context, n) => IconButton(
++          tooltip: context.t('notifications'),
++          icon: Badge(isLabelVisible: n > 0, label: Text(n > 99 ? '99+' : context.s.n(n)), child: const Icon(Icons.favorite_border)),
++          onPressed: () async {
++            final unread = context.read<UnreadCubit>();
++            await Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationsPage()));
++            unread.refresh();
++          },
++        ),
++      );
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/features/notifications/ui/notifications_page.dart b/vxgram/frontend/vxgram/lib/features/notifications/ui/notifications_page.dart
+--- a/vxgram/frontend/vxgram/lib/features/notifications/ui/notifications_page.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/lib/features/notifications/ui/notifications_page.dart	2026-10-12 09:43:44.345328949 +0000
+@@ -0,0 +1,108 @@
++import 'package:flutter/material.dart';
++import 'package:flutter_bloc/flutter_bloc.dart';
++import '../../../core/l10n/app_strings.dart';
++import '../../../core/theme/app_theme.dart';
++import '../../../core/widgets/common.dart';
++import '../../feed/ui/post_detail_page.dart';
++import '../../profile/domain/profile_repository.dart';
++import '../../profile/ui/profile_page.dart';
++import '../bloc/notifications_cubit.dart';
++import '../bloc/unread_cubit.dart';
++import '../domain/app_notification.dart';
++import '../domain/notification_repository.dart';
++
++class NotificationsPage extends StatelessWidget {
++  const NotificationsPage({super.key});
++  @override
++  Widget build(BuildContext context) => BlocProvider(
++        create: (c) => NotificationsCubit(c.read<NotificationRepository>(), c.read<ProfileRepository>(),
++            onMarkedRead: () => c.read<UnreadCubit>().clear())..load(),
++        child: const _View(),
++      );
++}
++
++class _View extends StatelessWidget {
++  const _View();
++
++  String _text(BuildContext context, AppNotification n) {
++    final s = context.s;
++    switch (n.type) {
++      case NotificationType.like: return s.fmt('notif_like', {'u': n.actorUsername});
++      case NotificationType.comment: return s.fmt('notif_comment', {'u': n.actorUsername, 'c': n.body ?? ''});
++      case NotificationType.follow: return s.fmt('notif_follow', {'u': n.actorUsername});
++      case NotificationType.followRequest: return s.fmt('notif_follow_request', {'u': n.actorUsername});
++      case NotificationType.followAccepted: return s.fmt('notif_follow_accepted', {'u': n.actorUsername});
++      case NotificationType.other: return n.actorUsername;
++    }
++  }
++
++  void _open(BuildContext context, AppNotification n) {
++    final hasPost = (n.type == NotificationType.like || n.type == NotificationType.comment) && n.postId != null;
++    Navigator.push(context, MaterialPageRoute(
++        builder: (_) => hasPost ? PostDetailPage(postId: n.postId!) : ProfilePage(userId: n.actorId)));
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final c = VxColors.of(context);
++    return Scaffold(
++      appBar: AppBar(title: Text(context.t('notifications'))),
++      body: BlocConsumer<NotificationsCubit, NotificationsState>(
++        listenWhen: (p, s) => s.error != null && s.error != p.error && s.status == NotificationsStatus.success,
++        listener: (context, st) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(st.error!))),
++        builder: (context, st) {
++          if (st.status == NotificationsStatus.loading) return const Center(child: CircularProgressIndicator());
++          if (st.status == NotificationsStatus.failure) {
++            return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
++              Text(st.error ?? ''), const SizedBox(height: 12),
++              OutlinedButton(style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
++                  onPressed: () => context.read<NotificationsCubit>().load(), child: Text(context.t('retry'))),
++            ]));
++          }
++          if (st.items.isEmpty) {
++            return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
++              Icon(Icons.notifications_none, size: 56, color: c.muted), const SizedBox(height: 12),
++              Text(context.t('no_notifications'), style: TextStyle(color: c.muted)),
++            ]));
++          }
++          return NotificationListener<ScrollNotification>(
++            onNotification: (n) {
++              if (n.metrics.pixels > n.metrics.maxScrollExtent - 400) context.read<NotificationsCubit>().loadMore();
++              return false;
++            },
++            child: ListView.builder(
++              itemCount: st.items.length,
++              itemBuilder: (context, i) {
++                final n = st.items[i];
++                final cubit = context.read<NotificationsCubit>();
++                Widget? trailing;
++                if (n.type == NotificationType.followRequest) {
++                  const size = Size(0, 36); // the theme's default is full-width: override inside rows
++                  const pad = EdgeInsets.symmetric(horizontal: 12);
++                  trailing = Row(mainAxisSize: MainAxisSize.min, children: [
++                    FilledButton(style: FilledButton.styleFrom(minimumSize: size, padding: pad), onPressed: () => cubit.respond(n, accept: true), child: Text(context.t('confirm'))),
++                    const SizedBox(width: 6),
++                    OutlinedButton(style: OutlinedButton.styleFrom(minimumSize: size, padding: pad), onPressed: () => cubit.respond(n, accept: false), child: Text(context.t('delete'))),
++                  ]);
++                } else if (n.thumbUrl != null) {
++                  trailing = ClipRRect(borderRadius: BorderRadius.circular(8),
++                      child: SizedBox(width: 44, height: 44, child: MediaTile(url: n.thumbUrl!, isVideo: false, play: false)));
++                }
++                return Container(
++                  color: n.read ? null : Color.alphaBlend(c.primary.withAlpha(22), c.bg),
++                  child: ListTile(
++                    leading: Avatar(url: n.actorAvatar, size: 44),
++                    title: Text(_text(context, n), maxLines: 3, overflow: TextOverflow.ellipsis),
++                    subtitle: Text(context.s.ago(n.createdAt), style: TextStyle(color: c.muted, fontSize: 12)),
++                    trailing: trailing,
++                    onTap: () => _open(context, n),
++                  ),
++                );
++              },
++            ),
++          );
++        },
++      ),
++    );
++  }
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/lib/main.dart b/vxgram/frontend/vxgram/lib/main.dart
+--- a/vxgram/frontend/vxgram/lib/main.dart	2026-10-12 09:43:44.340863104 +0000
++++ b/vxgram/frontend/vxgram/lib/main.dart	2026-10-12 09:43:44.345339222 +0000
+@@ -16,6 +16,10 @@
+ import 'features/feed/data/repositories/post_repository_impl.dart';
+ import 'features/feed/domain/post_repository.dart';
+ import 'features/feed/domain/thumbnail_generator.dart';
++import 'features/notifications/bloc/unread_cubit.dart';
++import 'features/notifications/data/datasources/notification_remote_data_source_impl.dart';
++import 'features/notifications/data/repositories/notification_repository_impl.dart';
++import 'features/notifications/domain/notification_repository.dart';
+ import 'features/profile/data/datasources/profile_remote_data_source_impl.dart';
+ import 'features/profile/data/repositories/profile_repository_impl.dart';
+ import 'features/profile/domain/profile_repository.dart';
+@@ -47,17 +51,19 @@
+   final CommentRepository commentRepo = CommentRepositoryImpl(CommentRemoteDataSourceImpl(client));
+   final ShareRepository shareRepo = ShareRepositoryImpl(ShareRemoteDataSourceImpl(client));
+   final ThumbnailGenerator thumbnails = ThumbnailGeneratorImpl();
++  final NotificationRepository notificationRepo = NotificationRepositoryImpl(NotificationRemoteDataSourceImpl(client));
+   final SavedRepository savedRepo = SavedRepositoryImpl(SavedRemoteDataSourceImpl(client));
+   final ProfileRepository profileRepo = ProfileRepositoryImpl(ProfileRemoteDataSourceImpl(client));
+ 
+   runApp(MultiRepositoryProvider(
+     providers: [RepositoryProvider<AuthRepository>.value(value: authRepo), RepositoryProvider<PostRepository>.value(value: postRepo), RepositoryProvider<ProfileRepository>.value(value: profileRepo),
+-      RepositoryProvider<CommentRepository>.value(value: commentRepo), RepositoryProvider<SavedRepository>.value(value: savedRepo), RepositoryProvider<ThumbnailGenerator>.value(value: thumbnails), RepositoryProvider<ShareRepository>.value(value: shareRepo)],
++      RepositoryProvider<CommentRepository>.value(value: commentRepo), RepositoryProvider<SavedRepository>.value(value: savedRepo), RepositoryProvider<NotificationRepository>.value(value: notificationRepo), RepositoryProvider<ThumbnailGenerator>.value(value: thumbnails), RepositoryProvider<ShareRepository>.value(value: shareRepo)],
+     child: MultiBlocProvider(
+       providers: [
+         BlocProvider(create: (_) => SettingsCubit(prefs)),
+         BlocProvider(create: (_) => AuthBloc(authRepo)..add(const AuthStarted())),
+         BlocProvider(create: (_) => SavedCubit(savedRepo)),
++        BlocProvider(create: (_) => UnreadCubit(notificationRepo)),
+       ],
+       child: const VxApp(),
+     ),
+diff -ruN -x .git a/vxgram/frontend/vxgram/test/fakes/fake_repositories.dart b/vxgram/frontend/vxgram/test/fakes/fake_repositories.dart
+--- a/vxgram/frontend/vxgram/test/fakes/fake_repositories.dart	2026-10-12 09:43:44.340965122 +0000
++++ b/vxgram/frontend/vxgram/test/fakes/fake_repositories.dart	2026-10-12 09:43:44.345436903 +0000
+@@ -6,6 +6,8 @@
+ import 'package:vxgram/features/feed/domain/new_media.dart';
+ import 'package:vxgram/features/feed/domain/post.dart';
+ import 'package:vxgram/features/feed/domain/post_repository.dart';
++import 'package:vxgram/features/notifications/domain/app_notification.dart';
++import 'package:vxgram/features/notifications/domain/notification_repository.dart';
+ import 'package:vxgram/features/profile/domain/profile.dart';
+ import 'package:vxgram/features/profile/domain/profile_repository.dart';
+ import 'package:vxgram/features/saved/domain/saved_repository.dart';
+@@ -56,6 +58,7 @@
+       : requests = requests ?? [], followingList = followingList ?? [], directory = directory ?? [];
+   final bool private; final List<UserSummary> requests, followingList, directory;
+   FollowStatus status = FollowStatus.none;
++  final responded = <String>[]; // 'followerId:accept'
+ 
+   @override String? get currentUserId => 'me';
+   @override Future<Profile> getProfile(String userId) async => Profile(
+@@ -68,7 +71,7 @@
+   @override Future<List<UserSummary>> followRequests() async => List.of(requests);
+   @override Future<List<UserSummary>> searchUsers(String query) async =>
+       directory.where((u) => u.username.contains(query.toLowerCase())).toList();
+-  @override Future<void> respondToRequest(String followerId, {required bool accept}) async {}
++  @override Future<void> respondToRequest(String followerId, {required bool accept}) async { responded.add('$followerId:$accept'); }
+   @override Future<void> removeFollower(String followerId) async {}
+   @override Future<void> updateProfile({String? fullName, String? bio, String? username}) async {}
+   @override Future<void> setPrivate(bool value) async {}
+@@ -108,3 +111,15 @@
+     return ids.add(postId) || !ids.remove(postId);
+   }
+ }
++
++// ---------------- notifications ----------------
++AppNotification fakeNotification(String id, {NotificationType type = NotificationType.like, bool read = false, String actor = 'u2'}) => AppNotification(
++    id: id, type: type, actorId: actor, actorUsername: 'ana', read: read, createdAt: DateTime(2026, 1, 1), postId: 'p1');
++
++class FakeNotificationRepository implements NotificationRepository {
++  FakeNotificationRepository({List<AppNotification>? items, this.unread = 0}) : items = items ?? [];
++  final List<AppNotification> items; int unread; bool markedRead = false;
++  @override Future<List<AppNotification>> list({DateTime? before}) async => List.of(items);
++  @override Future<int> unreadCount() async => unread;
++  @override Future<void> markAllRead() async { markedRead = true; unread = 0; }
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/test/notification_model_test.dart b/vxgram/frontend/vxgram/test/notification_model_test.dart
+--- a/vxgram/frontend/vxgram/test/notification_model_test.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/test/notification_model_test.dart	2026-10-12 09:43:44.345520903 +0000
+@@ -0,0 +1,27 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:vxgram/features/notifications/data/models/notification_model.dart';
++import 'package:vxgram/features/notifications/domain/app_notification.dart';
++
++void main() {
++  Map<String, dynamic> row(String type, {bool read = false}) => {
++        'id': 'n1', 'type': type, 'actor_id': 'u2', 'actor_username': 'ana', 'actor_avatar': null, 'post_id': 'p1',
++        'thumb_url': 'https://x/t.jpg', 'body': 'nice', 'is_read': read, 'created_at': '2026-01-01T00:00:00Z',
++      };
++
++  test('every backend type maps to an enum value; unknown types do not crash', () {
++    expect(NotificationModel.fromJson(row('like')).type, NotificationType.like);
++    expect(NotificationModel.fromJson(row('comment')).type, NotificationType.comment);
++    expect(NotificationModel.fromJson(row('follow')).type, NotificationType.follow);
++    expect(NotificationModel.fromJson(row('follow_request')).type, NotificationType.followRequest);
++    expect(NotificationModel.fromJson(row('follow_accepted')).type, NotificationType.followAccepted);
++    expect(NotificationModel.fromJson(row('something_new')).type, NotificationType.other);
++  });
++
++  test('fields are mapped', () {
++    final n = NotificationModel.fromJson(row('comment', read: true));
++    expect(n.actorUsername, 'ana');
++    expect(n.body, 'nice');
++    expect(n.thumbUrl, 'https://x/t.jpg');
++    expect(n.read, isTrue);
++  });
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/test/notifications_cubit_test.dart b/vxgram/frontend/vxgram/test/notifications_cubit_test.dart
+--- a/vxgram/frontend/vxgram/test/notifications_cubit_test.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/test/notifications_cubit_test.dart	2026-10-12 09:43:44.345529742 +0000
+@@ -0,0 +1,41 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:vxgram/features/notifications/bloc/notifications_cubit.dart';
++import 'package:vxgram/features/notifications/domain/app_notification.dart';
++import 'fakes/fake_repositories.dart';
++
++void main() {
++  test('load lists the items, marks everything read and clears the badge; items keep their unread flag', () async {
++    final repo = FakeNotificationRepository(items: [fakeNotification('1'), fakeNotification('2', read: true)], unread: 1);
++    var cleared = 0;
++    final cubit = NotificationsCubit(repo, FakeProfileRepository(), onMarkedRead: () => cleared++);
++    await cubit.load();
++    expect(cubit.state.status, NotificationsStatus.success);
++    expect(cubit.state.items.length, 2);
++    expect(cubit.state.items.first.read, isFalse); // still highlighted in this session
++    expect(repo.markedRead, isTrue);
++    expect(cleared, 1);
++    await cubit.close();
++  });
++
++  test('confirming a follow request tells the server and removes the row', () async {
++    final profiles = FakeProfileRepository();
++    final req = fakeNotification('7', type: NotificationType.followRequest, actor: 'u9');
++    final cubit = NotificationsCubit(FakeNotificationRepository(items: [req, fakeNotification('8')]), profiles);
++    await cubit.load();
++    await cubit.respond(req, accept: true);
++    expect(profiles.responded, ['u9:true']);
++    expect(cubit.state.items.map((n) => n.id), ['8']);
++    await cubit.close();
++  });
++
++  test('deleting a follow request sends accept: false', () async {
++    final profiles = FakeProfileRepository();
++    final req = fakeNotification('7', type: NotificationType.followRequest, actor: 'u9');
++    final cubit = NotificationsCubit(FakeNotificationRepository(items: [req]), profiles);
++    await cubit.load();
++    await cubit.respond(req, accept: false);
++    expect(profiles.responded, ['u9:false']);
++    expect(cubit.state.items, isEmpty);
++    await cubit.close();
++  });
++}
+diff -ruN -x .git a/vxgram/frontend/vxgram/test/unread_cubit_test.dart b/vxgram/frontend/vxgram/test/unread_cubit_test.dart
+--- a/vxgram/frontend/vxgram/test/unread_cubit_test.dart	1970-01-01 00:00:00.000000000 +0000
++++ b/vxgram/frontend/vxgram/test/unread_cubit_test.dart	2026-10-12 09:43:44.345540510 +0000
+@@ -0,0 +1,25 @@
++import 'package:flutter_test/flutter_test.dart';
++import 'package:vxgram/features/notifications/bloc/unread_cubit.dart';
++import 'fakes/fake_repositories.dart';
++
++void main() {
++  test('refresh reads the unread count, clear resets it', () async {
++    final cubit = UnreadCubit(FakeNotificationRepository(unread: 4));
++    await cubit.refresh();
++    expect(cubit.state, 4);
++    cubit.clear();
++    expect(cubit.state, 0);
++    await cubit.close();
++  });
++
++  test('start polls the server; stop (logout) resets to 0', () async {
++    final repo = FakeNotificationRepository(unread: 2);
++    final cubit = UnreadCubit(repo, interval: const Duration(milliseconds: 5))..start();
++    await cubit.stream.firstWhere((n) => n == 2);
++    repo.unread = 5;
++    await cubit.stream.firstWhere((n) => n == 5);
++    cubit.stop();
++    expect(cubit.state, 0);
++    await cubit.close();
++  });
++}

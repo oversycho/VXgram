@@ -6,6 +6,8 @@ import 'package:vxgram/features/comments/domain/comment_repository.dart';
 import 'package:vxgram/features/feed/domain/new_media.dart';
 import 'package:vxgram/features/feed/domain/post.dart';
 import 'package:vxgram/features/feed/domain/post_repository.dart';
+import 'package:vxgram/features/notifications/domain/app_notification.dart';
+import 'package:vxgram/features/notifications/domain/notification_repository.dart';
 import 'package:vxgram/features/profile/domain/profile.dart';
 import 'package:vxgram/features/profile/domain/profile_repository.dart';
 import 'package:vxgram/features/saved/domain/saved_repository.dart';
@@ -56,6 +58,7 @@ class FakeProfileRepository implements ProfileRepository {
       : requests = requests ?? [], followingList = followingList ?? [], directory = directory ?? [];
   final bool private; final List<UserSummary> requests, followingList, directory;
   FollowStatus status = FollowStatus.none;
+  final responded = <String>[]; // 'followerId:accept'
 
   @override String? get currentUserId => 'me';
   @override Future<Profile> getProfile(String userId) async => Profile(
@@ -68,7 +71,7 @@ class FakeProfileRepository implements ProfileRepository {
   @override Future<List<UserSummary>> followRequests() async => List.of(requests);
   @override Future<List<UserSummary>> searchUsers(String query) async =>
       directory.where((u) => u.username.contains(query.toLowerCase())).toList();
-  @override Future<void> respondToRequest(String followerId, {required bool accept}) async {}
+  @override Future<void> respondToRequest(String followerId, {required bool accept}) async { responded.add('$followerId:$accept'); }
   @override Future<void> removeFollower(String followerId) async {}
   @override Future<void> updateProfile({String? fullName, String? bio, String? username}) async {}
   @override Future<void> setPrivate(bool value) async {}
@@ -107,4 +110,16 @@ class FakeSavedRepository implements SavedRepository {
     if (fail) throw AppFailure('offline');
     return ids.add(postId) || !ids.remove(postId);
   }
+}
+
+// ---------------- notifications ----------------
+AppNotification fakeNotification(String id, {NotificationType type = NotificationType.like, bool read = false, String actor = 'u2'}) => AppNotification(
+    id: id, type: type, actorId: actor, actorUsername: 'ana', read: read, createdAt: DateTime(2026, 1, 1), postId: 'p1');
+
+class FakeNotificationRepository implements NotificationRepository {
+  FakeNotificationRepository({List<AppNotification>? items, this.unread = 0}) : items = items ?? [];
+  final List<AppNotification> items; int unread; bool markedRead = false;
+  @override Future<List<AppNotification>> list({DateTime? before}) async => List.of(items);
+  @override Future<int> unreadCount() async => unread;
+  @override Future<void> markAllRead() async { markedRead = true; unread = 0; }
 }
