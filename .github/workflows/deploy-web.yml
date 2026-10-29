@@ -3,7 +3,7 @@ name: Deploy Flutter Web
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # دکمه‌ی اجرای دستی از تب Actions
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vxgram/frontend/vxgram
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +35,7 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: build/web
+          path: vxgram/frontend/vxgram/build/web
 
   deploy:
     needs: build
