@@ -110,14 +110,15 @@ class _PostCardState extends State<PostCard> {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(children: [
-          IconButton(
-            icon: Icon(p.likedByMe ? Icons.favorite : Icons.favorite_border, color: p.likedByMe ? c.pink : null),
-            onPressed: () => context.read<FeedBloc>().add(FeedLikeToggled(p.id)),
-          ),
+         
           IconButton(icon: const Icon(Icons.chat_bubble_outline), onPressed: _openComments),
           // flip the plane icon in RTL
           IconButton(icon: Transform.flip(flipX: Directionality.of(context) == TextDirection.rtl, child: const Icon(Icons.send_outlined)),
               onPressed: _openShare),
+           IconButton(
+            icon: Icon(p.likedByMe ? Icons.favorite : Icons.favorite_border, color: p.likedByMe ? c.pink : null),
+            onPressed: () => context.read<FeedBloc>().add(FeedLikeToggled(p.id)),
+          ),
           IconButton(icon: const Icon(Icons.link), onPressed: () async {
             await Clipboard.setData(ClipboardData(text: link));
             if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.t('link_copied'))));
